@@ -25,10 +25,27 @@ import {
   Globe,
   MessagesSquare,
   HelpCircle,
+  Boxes,
+  ShieldAlert,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-const navGroups = [
+interface NavItem {
+  href: string
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+  adminOnly?: boolean
+}
+
+interface NavGroup {
+  label: string
+  dot: string
+  text: string
+  adminOnly?: boolean
+  items: NavItem[]
+}
+
+const navGroups: NavGroup[] = [
   {
     label: "Care",
     dot: "bg-blue-500",
@@ -38,6 +55,7 @@ const navGroups = [
       { href: "/patients", label: "Patients", icon: Users },
       { href: "/appointments", label: "Appointments", icon: CalendarDays },
       { href: "/queue", label: "Queue", icon: ListOrdered },
+      { href: "/inventory", label: "Inventory", icon: Boxes },
       { href: "/waiting-list", label: "Waiting List", icon: Clock },
       { href: "/follow-ups", label: "Follow-ups", icon: CheckSquare },
       { href: "/communications", label: "Communications", icon: MessageSquare },
@@ -51,6 +69,7 @@ const navGroups = [
       { href: "/appointments/availability", label: "Doctor Availability", icon: CalendarClock },
       { href: "/templates", label: "Doctor Templates", icon: FileEdit },
       { href: "/settings/signature", label: "Digital Signature", icon: PenTool },
+      { href: "/audit-logs", label: "Audit Logs", icon: ShieldAlert, adminOnly: true },
     ],
   },
   {
@@ -72,6 +91,7 @@ const navGroups = [
     label: "Website",
     dot: "bg-pink-500",
     text: "text-pink-600 dark:text-pink-400",
+    adminOnly: true,
     items: [
       { href: "/website/content", label: "Site Content", icon: Globe },
       { href: "/website/reviews", label: "Reviews", icon: MessagesSquare },
@@ -86,8 +106,17 @@ const navGroups = [
   },
 ]
 
-export function SidebarNav() {
+export function SidebarNav({ role = "ADMIN" }: { role?: string }) {
   const pathname = usePathname()
+  const isAdmin = role === "ADMIN"
+
+  const visibleGroups = navGroups
+    .filter((group) => !group.adminOnly || isAdmin)
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => !item.adminOnly || isAdmin),
+    }))
+    .filter((group) => group.items.length > 0)
 
   return (
     <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r bg-background">
@@ -97,11 +126,11 @@ export function SidebarNav() {
         </div>
         <div className="leading-tight">
           <p className="text-sm font-semibold">Zafoor Clinic</p>
-          <p className="text-xs text-muted-foreground">Clinic CRM</p>
+          <p className="text-xs text-muted-foreground">{role === "ADMIN" ? "Admin CRM" : "Reception Desk"}</p>
         </div>
       </div>
       <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-4">
-        {navGroups.map((group) => (
+        {visibleGroups.map((group) => (
           <div key={group.label} className="space-y-1">
             <p className={cn("flex items-center gap-1.5 px-3 text-[11px] font-semibold uppercase tracking-wide", group.text)}>
               <span className={cn("h-1.5 w-1.5 rounded-full", group.dot)} />
@@ -111,8 +140,9 @@ export function SidebarNav() {
               const isActive =
                 pathname === item.href ||
                 (item.href === "/appointments" && pathname.startsWith("/appointments/")) ||
+                (item.href === "/inventory" && pathname.startsWith("/inventory/")) ||
                 (item.href === "/billing" && pathname.startsWith("/billing/") && !pathname.startsWith("/billing/refunds")) ||
-                (!["/appointments", "/billing"].includes(item.href) && item.href.length > 1 && pathname.startsWith(`${item.href}/`))
+                (!["/appointments", "/billing", "/inventory"].includes(item.href) && item.href.length > 1 && pathname.startsWith(`${item.href}/`))
               const Icon = item.icon
               return (
                 <Link

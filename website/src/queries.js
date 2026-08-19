@@ -170,6 +170,62 @@ async function bookWebsiteAppointment({ doctorId, serviceId, scheduledAt, durati
   }
 }
 
+async function saveContactMessage({ name, email, phone, message, subject }) {
+  const client = await pool.connect()
+  try {
+    await client.query("BEGIN")
+
+    let patientId
+    let existing
+    if (phone) {
+      existing = await client.query(`SELECT id FROM "Patient" WHERE phone = $1 LIMIT 1`, [phone])
+    } else if (email) {
+      existing = await client.query(`SELECT id FROM "Patient" WHERE email = $1 LIMIT 1`, [email])
+    }
+
+    if (existing && existing.rows.length > 0) {
+      patientId = existing.rows[0].id
+    } else {
+      const uhid = await generateUHID(client)
+      const patientIdGen = `pt_${uhid.replace(/[^a-zA-Z0-9]/g, "").toLowerCase()}`
+      const nameParts = (name || "Website Visitor").trim().split(" ")
+      const firstName = nameParts[0] || "Website"
+      const lastName = nameParts.slice(1).join(" ") || null
+      const contactPhone = phone || `INQ-${Date.now().toString().slice(-8)}`
+
+      const inserted = await client.query(
+        `INSERT INTO "Patient"
+           (id, uhid, "firstName", "lastName", phone, email, source, "createdAt", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, $6, 'WEBSITE_CONTACT', now(), now())
+         RETURNING id`,
+        [patientIdGen, uhid, firstName, lastName, contactPhone, email || null]
+      )
+      patientId = inserted.rows[0].id
+      await client.query(
+        `INSERT INTO "CommunicationPreference" (id, "patientId", "preferredChannel", "updatedAt")
+         VALUES ($1, $2, 'EMAIL', now())`,
+        [`cp_${patientIdGen}`, patientId]
+      )
+    }
+
+    const messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
+    await client.query(
+      `INSERT INTO "Message"
+         (id, "patientId", channel, direction, subject, body, status, "sentAt")
+       VALUES ($1, $2, 'EMAIL', 'INBOUND', $3, $4, 'DELIVERED', now())`,
+      [messageId, patientId, subject || "Website Inquiry", message]
+    )
+
+    await client.query("COMMIT")
+    return { success: true, patientId, messageId }
+  } catch (err) {
+    await client.query("ROLLBACK")
+    throw err
+  } finally {
+    client.release()
+  }
+}
+
 module.exports = {
   getClinicSettings,
   getActiveServices,
@@ -180,4 +236,5 @@ module.exports = {
   getDoctorAvailability,
   getBookedSlots,
   bookWebsiteAppointment,
+  saveContactMessage,
 }

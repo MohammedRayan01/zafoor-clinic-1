@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useTransition } from "react"
-import { Pencil, Plus, Phone, Mail, MapPin, Tag as TagIcon } from "lucide-react"
+import { Pencil, Plus, Phone, Mail, MapPin, Tag as TagIcon, Lock } from "lucide-react"
 import { toast } from "sonner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -49,6 +49,11 @@ export function PatientHeader({ patient, allTags }: { patient: Patient; allTags:
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-semibold">{patientDisplayName(patient)}</h1>
               <Badge variant="outline" className="font-mono text-xs">{patient.uhid}</Badge>
+              {patient.registrationStatus === "LOCKED_FOR_RECEPTIONIST" && (
+                <Badge variant="secondary" className="gap-1 text-xs text-amber-700 bg-amber-100 dark:bg-amber-950/40">
+                  <Lock className="h-3 w-3" /> Locked Registration
+                </Badge>
+              )}
             </div>
             <p className="text-sm text-muted-foreground mt-0.5">
               {age !== null ? `${age} yrs` : "Age unknown"}

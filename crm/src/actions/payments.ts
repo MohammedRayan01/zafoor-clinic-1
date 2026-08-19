@@ -5,11 +5,12 @@ import { prisma } from "@/lib/prisma"
 import { requireRole } from "@/lib/auth"
 import { generateReceiptNumber } from "@/lib/sequence"
 import { toPlain } from "@/lib/serialize"
+import { logAudit } from "@/lib/audit"
 import { collectPaymentSchema, refundSchema, type CollectPaymentInput, type RefundInput } from "@/lib/validations/billing"
 
 function nextBillStatus(netAmount: number, amountPaid: number): "PENDING" | "PARTIALLY_PAID" | "PAID" {
   if (amountPaid <= 0) return "PENDING"
-  if (amountPaid >= netAmount) return "PAID"
+  if (amountPaid >= netAmount - 0.01) return "PAID"
   return "PARTIALLY_PAID"
 }
 
@@ -17,13 +18,22 @@ export async function collectPayment(billId: string, patientId: string, input: C
   const data = collectPaymentSchema.parse(input)
   const user = await requireRole("ADMIN", "BILLING", "RECEPTIONIST")
 
-  const bill = await prisma.bill.findUniqueOrThrow({ where: { id: billId } })
+  const bill = await prisma.bill.findUniqueOrThrow({
+    where: { id: billId },
+    include: { items: true },
+  })
+
+  if (bill.status === "PAID") {
+    throw new Error("This bill is already fully paid and finalized.")
+  }
+
   const balanceDue = Number(bill.balanceDue)
   if (data.amount > balanceDue + 0.01) {
     throw new Error(`Amount exceeds outstanding balance of ₹${balanceDue.toFixed(2)}`)
   }
 
-  return prisma.$transaction(async (tx) => {
+  const paymentResult = await prisma.$transaction(async (tx) => {
+    // 1. Advance payment deduction
     if (data.method === "ADVANCE") {
       let remaining = data.amount
       const advances = await tx.patientAdvance.findMany({
@@ -43,12 +53,14 @@ export async function collectPayment(billId: string, patientId: string, input: C
       }
     }
 
+    // 2. Cash session hook
     let cashSessionId: string | null = null
     if (data.method === "CASH") {
       const session = await tx.cashSession.findFirst({ where: { status: "OPEN" }, orderBy: { openedAt: "desc" } })
       cashSessionId = session?.id ?? null
     }
 
+    // 3. Create payment record
     const receiptNumber = await generateReceiptNumber(tx)
     const payment = await tx.payment.create({
       data: {
@@ -65,24 +77,151 @@ export async function collectPayment(billId: string, patientId: string, input: C
     })
 
     const newAmountPaid = Number(bill.amountPaid) + data.amount
-    const newBalanceDue = Number(bill.netAmount) - newAmountPaid
+    const newBalanceDue = Math.max(Number(bill.netAmount) - newAmountPaid, 0)
+    const newStatus = nextBillStatus(Number(bill.netAmount), newAmountPaid)
+
     await tx.bill.update({
       where: { id: billId },
       data: {
         amountPaid: newAmountPaid,
-        balanceDue: Math.max(newBalanceDue, 0),
-        status: nextBillStatus(Number(bill.netAmount), newAmountPaid),
+        balanceDue: newBalanceDue,
+        status: newStatus,
       },
     })
 
+    // 4. ATOMIC INVENTORY DEDUCTION ON BILL FINALIZATION / PAYMENT
+    // When payment is recorded, any medicines on this bill that haven't been dispensed yet are atomically deducted
+    for (const billItem of bill.items) {
+      const invItem = await tx.inventoryItem.findFirst({
+        where: {
+          active: true,
+          OR: [
+            { name: { equals: billItem.description, mode: "insensitive" } },
+            { sku: { equals: billItem.description, mode: "insensitive" } },
+          ],
+        },
+      })
+
+      if (invItem) {
+        // Check if already dispensed for this bill to prevent double deduction
+        const alreadyDispensed = await tx.inventoryTransaction.findFirst({
+          where: {
+            itemId: invItem.id,
+            patientId,
+            reason: { contains: bill.billNumber },
+          },
+        })
+
+        if (!alreadyDispensed) {
+          if (invItem.currentStock < billItem.quantity) {
+            throw new Error(`Cannot finalize billing: Insufficient stock for ${invItem.name}. Required: ${billItem.quantity}, Available: ${invItem.currentStock}`)
+          }
+
+          const previousStock = invItem.currentStock
+          const newStock = previousStock - billItem.quantity
+
+          await tx.inventoryItem.update({
+            where: { id: invItem.id },
+            data: { currentStock: newStock },
+          })
+
+          await tx.inventoryTransaction.create({
+            data: {
+              itemId: invItem.id,
+              type: "STOCK_OUT",
+              quantity: billItem.quantity,
+              previousStock,
+              newStock,
+              reason: `Bill #${bill.billNumber} Dispense`,
+              patientId,
+              performedById: user.id,
+            },
+          })
+
+          // Low-Stock Threshold Evaluation (20% threshold)
+          if (newStock <= invItem.lowStockThresholdQty) {
+            const existingAlert = await tx.inventoryAlert.findFirst({
+              where: {
+                itemId: invItem.id,
+                status: { in: ["ACTIVE", "ACKNOWLEDGED"] },
+              },
+            })
+
+            if (existingAlert) {
+              await tx.inventoryAlert.update({
+                where: { id: existingAlert.id },
+                data: {
+                  currentQuantity: newStock,
+                  updatedAt: new Date(),
+                  severity: newStock === 0 ? "CRITICAL" : "HIGH",
+                },
+              })
+            } else {
+              await tx.inventoryAlert.create({
+                data: {
+                  itemId: invItem.id,
+                  alertType: "LOW_STOCK",
+                  severity: newStock === 0 ? "CRITICAL" : "HIGH",
+                  currentQuantity: newStock,
+                  thresholdQuantity: invItem.lowStockThresholdQty,
+                  status: "ACTIVE",
+                },
+              })
+            }
+          }
+        }
+      }
+    }
+
+    // 5. Audit Logging
+    await logAudit({
+      action: "PAYMENT_RECORDED",
+      entityType: "Payment",
+      entityId: payment.id,
+      metadata: {
+        receiptNumber: payment.receiptNumber,
+        billNumber: bill.billNumber,
+        patientId,
+        amount: data.amount,
+        method: data.method,
+        remainingBalance: newBalanceDue,
+        billStatus: newStatus,
+      },
+      userId: user.id,
+      userName: user.name,
+      userRole: user.role,
+      tx,
+    })
+
+    if (newStatus === "PAID") {
+      await logAudit({
+        action: "BILL_FINALIZED",
+        entityType: "Bill",
+        entityId: bill.id,
+        metadata: {
+          billNumber: bill.billNumber,
+          patientId,
+          totalAmount: Number(bill.totalAmount),
+          netAmount: Number(bill.netAmount),
+          amountPaid: newAmountPaid,
+        },
+        userId: user.id,
+        userName: user.name,
+        userRole: user.role,
+        tx,
+      })
+    }
+
     return payment
-  }).then(async (payment) => {
-    revalidatePath(`/billing/${billId}`)
-    revalidatePath("/billing")
-    revalidatePath(`/patients/${patientId}`)
-    revalidatePath("/finance/cash-counter")
-    return toPlain(payment)
   })
+
+  revalidatePath(`/billing/${billId}`)
+  revalidatePath("/billing")
+  revalidatePath(`/patients/${patientId}`)
+  revalidatePath("/finance/cash-counter")
+  revalidatePath("/inventory")
+  revalidatePath("/inventory/alerts")
+  return toPlain(paymentResult)
 }
 
 export async function getPayments(params: { patientId?: string; cashSessionId?: string; page?: number; pageSize?: number }) {
@@ -139,7 +278,7 @@ export async function getPatientAdvanceBalance(patientId: string) {
   return advances.reduce((sum, a) => sum + Number(a.balance), 0)
 }
 
-// ── Refunds ─────────────────────────────────────────────────────────────
+// ── Refunds & Stock Return ──────────────────────────────────────────────
 
 export async function requestRefund(patientId: string, input: RefundInput, billId?: string, paymentId?: string) {
   const data = refundSchema.parse(input)
@@ -170,8 +309,12 @@ export async function processRefund(id: string, decision: "COMPLETE" | "REJECT")
       where: { id },
       data: { status: "COMPLETED", processedAt: new Date(), processedById: user.id },
     })
+
     if (refund.billId) {
-      const bill = await tx.bill.findUniqueOrThrow({ where: { id: refund.billId } })
+      const bill = await tx.bill.findUniqueOrThrow({
+        where: { id: refund.billId },
+        include: { items: true },
+      })
       const newAmountPaid = Math.max(Number(bill.amountPaid) - Number(refund.amount), 0)
       const newBalanceDue = Number(bill.netAmount) - newAmountPaid
       await tx.bill.update({
@@ -182,12 +325,82 @@ export async function processRefund(id: string, decision: "COMPLETE" | "REJECT")
           status: newAmountPaid <= 0 ? "REFUNDED" : nextBillStatus(Number(bill.netAmount), newAmountPaid),
         },
       })
+
+      // Explicit STOCK_RETURN if medicines were dispensed on this refunded bill
+      for (const item of bill.items) {
+        const invItem = await tx.inventoryItem.findFirst({
+          where: {
+            active: true,
+            OR: [
+              { name: { equals: item.description, mode: "insensitive" } },
+              { sku: { equals: item.description, mode: "insensitive" } },
+            ],
+          },
+        })
+
+        if (invItem) {
+          const previousStock = invItem.currentStock
+          const newStock = previousStock + item.quantity
+
+          await tx.inventoryItem.update({
+            where: { id: invItem.id },
+            data: { currentStock: newStock },
+          })
+
+          await tx.inventoryTransaction.create({
+            data: {
+              itemId: invItem.id,
+              type: "RETURN",
+              quantity: item.quantity,
+              previousStock,
+              newStock,
+              reason: `Refund on Bill #${bill.billNumber}`,
+              patientId: refund.patientId,
+              performedById: user.id,
+            },
+          })
+
+          // Auto-resolve low-stock alert if restocked above threshold
+          if (newStock > invItem.lowStockThresholdQty) {
+            await tx.inventoryAlert.updateMany({
+              where: {
+                itemId: invItem.id,
+                status: { in: ["ACTIVE", "ACKNOWLEDGED"] },
+              },
+              data: {
+                status: "RESOLVED",
+                resolvedAt: new Date(),
+                resolvedById: user.id,
+                notes: "Auto-resolved after refund stock return",
+              },
+            })
+          }
+        }
+      }
+
+      await logAudit({
+        action: "REFUND_CREATED",
+        entityType: "Refund",
+        entityId: refund.id,
+        metadata: {
+          billNumber: bill.billNumber,
+          patientId: refund.patientId,
+          amount: Number(refund.amount),
+          reason: refund.reason,
+        },
+        userId: user.id,
+        userName: user.name,
+        userRole: user.role,
+        tx,
+      })
     }
   })
 
   revalidatePath("/billing/refunds")
   if (refund.billId) revalidatePath(`/billing/${refund.billId}`)
   revalidatePath(`/patients/${refund.patientId}`)
+  revalidatePath("/inventory")
+  revalidatePath("/inventory/alerts")
 }
 
 export async function getRefunds(status?: string) {

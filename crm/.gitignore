@@ -46,3 +46,7 @@ next-env.d.ts
 # local file uploads
 /public/uploads/*
 !/public/uploads/.gitkeep
+
+# local docker data
+.local-postgres-data/
+

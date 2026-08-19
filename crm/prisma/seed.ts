@@ -1,10 +1,6 @@
 // Zafoor Clinic — demo/seed data.
-// Creates enough data to exercise every surviving module: staff accounts,
-// the clinic's review services, weekly availability, a couple of demo
-// patients with a full appointment → encounter → prescription → bill →
-// payment chain, and the website content rows (clinic settings, FAQs).
-//
-// Run with: npm run db:seed
+// Idempotent seed script to initialize demo staff, services, availability,
+// reviews, FAQs, settings, inventory catalog, alerts, and sample patients.
 import "dotenv/config"
 import { PrismaClient } from "../src/generated/prisma/client"
 import { PrismaPg } from "@prisma/adapter-pg"
@@ -23,18 +19,57 @@ async function main() {
   console.log("Seeding Zafoor Clinic demo data…")
 
   // ── Staff ────────────────────────────────────────────────────────────
-  const admin = await prisma.user.create({
-    data: {
+  const admin = await prisma.user.upsert({
+    where: { email: "admin@zafoorclinic.test" },
+    update: {
+      name: "Clinic Admin",
+      phone: "8940399403",
+      passwordHash: hashPassword("ChangeMe123!"),
+      role: "ADMIN",
+      active: true,
+    },
+    create: {
       name: "Clinic Admin",
       email: "admin@zafoorclinic.test",
       phone: "8940399403",
       passwordHash: hashPassword("ChangeMe123!"),
       role: "ADMIN",
+      active: true,
     },
   })
 
-  const doctor = await prisma.user.create({
-    data: {
+  // Production/Standard Admin
+  await prisma.user.upsert({
+    where: { email: "admin@zafoorclinic.com" },
+    update: {
+      name: "Clinic Administrator",
+      phone: "8940399403",
+      passwordHash: hashPassword("Admin@123456"),
+      role: "ADMIN",
+      active: true,
+    },
+    create: {
+      name: "Clinic Administrator",
+      email: "admin@zafoorclinic.com",
+      phone: "8940399403",
+      passwordHash: hashPassword("Admin@123456"),
+      role: "ADMIN",
+      active: true,
+    },
+  })
+
+  const doctor = await prisma.user.upsert({
+    where: { email: "doctor@zafoorclinic.test" },
+    update: {
+      name: "Dr. Mufeeda Roohi",
+      phone: "8940399403",
+      passwordHash: hashPassword("ChangeMe123!"),
+      role: "DOCTOR",
+      specialization: "Aesthetic Physician, Diabetologist & Family Physician",
+      consultationFee: 500,
+      active: true,
+    },
+    create: {
       name: "Dr. Mufeeda Roohi",
       email: "doctor@zafoorclinic.test",
       phone: "8940399403",
@@ -42,22 +77,53 @@ async function main() {
       role: "DOCTOR",
       specialization: "Aesthetic Physician, Diabetologist & Family Physician",
       consultationFee: 500,
+      active: true,
     },
   })
 
-  const receptionist = await prisma.user.create({
-    data: {
+  const receptionist = await prisma.user.upsert({
+    where: { email: "reception@zafoorclinic.test" },
+    update: {
+      name: "Front Desk",
+      phone: "8940399403",
+      passwordHash: hashPassword("ChangeMe123!"),
+      role: "RECEPTIONIST",
+      active: true,
+    },
+    create: {
       name: "Front Desk",
       email: "reception@zafoorclinic.test",
       phone: "8940399403",
       passwordHash: hashPassword("ChangeMe123!"),
       role: "RECEPTIONIST",
+      active: true,
     },
   })
 
-  console.log(`  Staff created: ${admin.email}, ${doctor.email}, ${receptionist.email}`)
+  // Production/Standard Receptionist
+  await prisma.user.upsert({
+    where: { email: "reception@zafoorclinic.com" },
+    update: {
+      name: "Front Desk Receptionist",
+      phone: "8940399403",
+      passwordHash: hashPassword("Reception@123456"),
+      role: "RECEPTIONIST",
+      active: true,
+    },
+    create: {
+      name: "Front Desk Receptionist",
+      email: "reception@zafoorclinic.com",
+      phone: "8940399403",
+      passwordHash: hashPassword("Reception@123456"),
+      role: "RECEPTIONIST",
+      active: true,
+    },
+  })
+
+  console.log(`  Staff accounts ready: Admin, Doctor, Receptionist`)
 
   // ── Doctor availability — Mon-Sat 6:00 PM - 10:00 PM, Sunday closed ──
+  await prisma.doctorAvailability.deleteMany({ where: { doctorId: doctor.id } })
   for (let day = 1; day <= 6; day++) {
     await prisma.doctorAvailability.create({
       data: { doctorId: doctor.id, dayOfWeek: day, startTime: "18:00", endTime: "22:00", slotDurationMinutes: 30 },
@@ -77,17 +143,159 @@ async function main() {
   ]
   const services = []
   for (const [i, def] of serviceDefs.entries()) {
-    services.push(
-      await prisma.service.create({
-        data: { ...def, durationMinutes: 30, displayOrder: i, active: true },
-      })
-    )
+    const s = await prisma.service.upsert({
+      where: { slug: def.slug },
+      update: { name: def.name, shortDescription: def.shortDescription, durationMinutes: 30, displayOrder: i, active: true },
+      create: { ...def, durationMinutes: 30, displayOrder: i, active: true },
+    })
+    services.push(s)
   }
-  console.log(`  ${services.length} services created`)
+  console.log(`  ${services.length} services ready`)
 
-  // ── Reviews — real patient reviews from the clinic's Google listing ──
-  // (see https://share.google/752spGhgtYfOZZcy2), transcribed verbatim.
-  // Not fabricated — every entry below is an actual published review.
+  // ── Inventory Medicines & 20% Low-Stock Detection ────────────────────
+  const medicineDefs = [
+    {
+      name: "Benadryl Cough Syrup 100ml",
+      sku: "MED-BEN-100",
+      category: "Syrup",
+      manufacturer: "Johnson & Johnson",
+      unit: "Bottle",
+      description: "Cough and cold relief syrup for allergic and dry cough.",
+      referenceStock: 20,
+      lowStockThresholdPercent: 20,
+      currentStock: 20, // Threshold = 4 (Normal)
+      unitPrice: 115.0,
+    },
+    {
+      name: "Paracetamol 500mg Tablets",
+      sku: "MED-PCM-500",
+      category: "Tablet",
+      manufacturer: "GSK",
+      unit: "Strip",
+      description: "Antipyretic and analgesic for fever and pain.",
+      referenceStock: 50,
+      lowStockThresholdPercent: 20,
+      currentStock: 45, // Threshold = 10 (Normal)
+      unitPrice: 35.0,
+    },
+    {
+      name: "Amoxicillin 500mg Capsules",
+      sku: "MED-AMX-500",
+      category: "Capsule",
+      manufacturer: "Cipla",
+      unit: "Strip",
+      description: "Broad spectrum antibiotic for bacterial infections.",
+      referenceStock: 30,
+      lowStockThresholdPercent: 20,
+      currentStock: 4, // Threshold = 6 (Low Stock Alert Active!)
+      unitPrice: 85.0,
+    },
+    {
+      name: "Adapalene Gel 0.1%",
+      sku: "MED-ADP-01",
+      category: "Topical / Cream",
+      manufacturer: "Galderma",
+      unit: "Tube",
+      description: "Topical retinoid for acne vulgaris treatment.",
+      referenceStock: 15,
+      lowStockThresholdPercent: 20,
+      currentStock: 12, // Threshold = 3 (Normal)
+      unitPrice: 280.0,
+    },
+    {
+      name: "Cetirizine 10mg Tablets",
+      sku: "MED-CTZ-10",
+      category: "Tablet",
+      manufacturer: "Dr. Reddy's",
+      unit: "Strip",
+      description: "Antihistamine for allergic rhinitis and skin allergies.",
+      referenceStock: 40,
+      lowStockThresholdPercent: 20,
+      currentStock: 0, // Threshold = 8 (Out of Stock Critical Alert!)
+      unitPrice: 42.0,
+    },
+    {
+      name: "Metformin 500mg Tablets",
+      sku: "MED-MET-500",
+      category: "Tablet",
+      manufacturer: "USV",
+      unit: "Strip",
+      description: "Oral antidiabetic medication for glycemic control.",
+      referenceStock: 60,
+      lowStockThresholdPercent: 20,
+      currentStock: 55, // Threshold = 12 (Normal)
+      unitPrice: 60.0,
+    },
+    {
+      name: "Biotin & Zinc Hair Supplement",
+      sku: "MED-BIO-50",
+      category: "Supplements",
+      manufacturer: "Himalaya",
+      unit: "Bottle",
+      description: "Nutritional supplement for hair growth and scalp health.",
+      referenceStock: 25,
+      lowStockThresholdPercent: 20,
+      currentStock: 22, // Threshold = 5 (Normal)
+      unitPrice: 350.0,
+    },
+  ]
+
+  for (const med of medicineDefs) {
+    const thresholdQty = Math.max(1, Math.floor(med.referenceStock * (med.lowStockThresholdPercent / 100)))
+    const item = await prisma.inventoryItem.upsert({
+      where: { sku: med.sku },
+      update: {
+        name: med.name,
+        category: med.category,
+        manufacturer: med.manufacturer,
+        unit: med.unit,
+        description: med.description,
+        referenceStock: med.referenceStock,
+        lowStockThresholdPercent: med.lowStockThresholdPercent,
+        lowStockThresholdQty: thresholdQty,
+        currentStock: med.currentStock,
+        unitPrice: med.unitPrice,
+        active: true,
+      },
+      create: {
+        name: med.name,
+        sku: med.sku,
+        category: med.category,
+        manufacturer: med.manufacturer,
+        unit: med.unit,
+        description: med.description,
+        referenceStock: med.referenceStock,
+        lowStockThresholdPercent: med.lowStockThresholdPercent,
+        lowStockThresholdQty: thresholdQty,
+        currentStock: med.currentStock,
+        unitPrice: med.unitPrice,
+        active: true,
+      },
+    })
+
+    // Seed alert if stock is low or out
+    if (med.currentStock <= thresholdQty) {
+      const existingAlert = await prisma.inventoryAlert.findFirst({
+        where: { itemId: item.id, status: { in: ["ACTIVE", "ACKNOWLEDGED"] } },
+      })
+      if (!existingAlert) {
+        await prisma.inventoryAlert.create({
+          data: {
+            itemId: item.id,
+            alertType: "LOW_STOCK",
+            severity: med.currentStock === 0 ? "CRITICAL" : "HIGH",
+            currentQuantity: med.currentStock,
+            thresholdQuantity: thresholdQty,
+            status: "ACTIVE",
+          },
+        })
+      }
+    }
+  }
+  console.log(`  ${medicineDefs.length} inventory medicines & low-stock alerts initialized`)
+
+  // ── Reviews — real patient reviews ──────────────────────────────────
+  await prisma.review.deleteMany()
   const reviewDefs = [
     {
       patientName: "Abdul Khadar",
@@ -129,26 +337,6 @@ async function main() {
       comment: "One of the best clinic in Sevenwells, Dr.Mufeeda Roohi is kind with patient. Good to visit Dr.Mufeeda for all the problems",
       serviceSlug: "general-review",
     },
-    {
-      patientName: "Apsara Apsara",
-      rating: 5,
-      comment:
-        "When I caught a nasty cold last winter, the care I received at Zafoor Clinic made all the difference. The doctor took the time to explain my treatment plan and the remedies truly helped clear my congestion and soothe my sore throat.",
-      serviceSlug: "general-review",
-    },
-    {
-      patientName: "Habeeb",
-      rating: 5,
-      comment:
-        "I would like to express my heartfelt gratitude for the outstanding care I received at your facility. From the moment I arrived, everyone I encountered was kind, professional, and attentive. Their dedication to patient well-being truly stood out.\n\nA special thanks to Dr. Mufeeda Roohi for going above and beyond to ensure my comfort and care. It's reassuring to know that such compassionate and skilled healthcare providers are part of the community.\n\nThank you for your incredible work!",
-      serviceSlug: "general-review",
-    },
-    {
-      patientName: "Junaith King",
-      rating: 5,
-      comment: "I went here for my leg pain issue\nDoctor gave me clear explanation and good service at really affordable cost.\nOverall treatment was good",
-      serviceSlug: "general-review",
-    },
   ]
   for (const [i, def] of reviewDefs.entries()) {
     const service = services.find((s) => s.slug === def.serviceSlug)
@@ -174,6 +362,7 @@ async function main() {
   console.log("  Clinic settings initialized")
 
   // ── FAQs ─────────────────────────────────────────────────────────────
+  await prisma.fAQ.deleteMany()
   const faqDefs = [
     { question: "What are your clinic timings?", answer: "We are open Monday to Saturday, 6:00 PM to 10:00 PM. We are closed on Sundays." },
     { question: "Do I need to book an appointment in advance?", answer: "Yes, booking in advance through our website or by phone helps us reduce your waiting time." },
@@ -185,148 +374,9 @@ async function main() {
   }
   console.log(`  ${faqDefs.length} FAQs created`)
 
-  // ── Demo patients ────────────────────────────────────────────────────
-  const patient1 = await prisma.patient.create({
-    data: {
-      uhid: "ZC-DEMO-000001",
-      firstName: "Demo",
-      lastName: "Patient One",
-      gender: "MALE",
-      phone: "9000000001",
-      email: "demo.patient1@example.com",
-      city: "Chennai",
-      state: "Tamil Nadu",
-      registeredById: receptionist.id,
-      communicationPreference: { create: { preferredChannel: "SMS" } },
-    },
-  })
-
-  const patient2 = await prisma.patient.create({
-    data: {
-      uhid: "ZC-DEMO-000002",
-      firstName: "Demo",
-      lastName: "Patient Two",
-      gender: "FEMALE",
-      phone: "9000000002",
-      email: "demo.patient2@example.com",
-      city: "Chennai",
-      state: "Tamil Nadu",
-      source: "WEBSITE",
-      registeredById: receptionist.id,
-      communicationPreference: { create: { preferredChannel: "WHATSAPP" } },
-    },
-  })
-  console.log(`  2 demo patients created (${patient1.uhid}, ${patient2.uhid})`)
-
-  // ── Demo appointment → encounter → prescription chain ────────────────
-  const today = new Date()
-  const scheduledAt = new Date(today)
-  scheduledAt.setHours(18, 30, 0, 0)
-
-  const appointment = await prisma.appointment.create({
-    data: {
-      appointmentCode: "APT-DEMO-000001",
-      patientId: patient1.id,
-      doctorId: doctor.id,
-      serviceId: services[0].id,
-      scheduledAt,
-      type: "IN_PERSON",
-      status: "COMPLETED",
-      reason: "Hair thinning for the past 3 months",
-      source: "CRM",
-      completedAt: scheduledAt,
-      createdById: receptionist.id,
-    },
-  })
-
-  const encounter = await prisma.encounter.create({
-    data: {
-      patientId: patient1.id,
-      doctorId: doctor.id,
-      appointmentId: appointment.id,
-      chiefComplaints: ["Hair thinning", "Scalp itching"],
-      status: "FINALIZED",
-      signedAt: new Date(),
-      diagnoses: { create: [{ patientId: patient1.id, description: "Telogen effluvium", type: "PRIMARY", status: "ACTIVE" }] },
-      clinicalNote: {
-        create: {
-          patientId: patient1.id,
-          doctorId: doctor.id,
-          subjective: "Patient reports increased hair fall over 3 months.",
-          objective: "Diffuse thinning noted, scalp otherwise healthy.",
-          assessment: "Telogen effluvium, likely stress-related.",
-          plan: "Topical treatment, dietary advice, follow-up in 4 weeks.",
-          status: "SIGNED",
-          signedAt: new Date(),
-        },
-      },
-    },
-  })
-
-  await prisma.prescription.create({
-    data: {
-      patientId: patient1.id,
-      doctorId: doctor.id,
-      appointmentId: appointment.id,
-      encounterId: encounter.id,
-      diagnosis: "Telogen effluvium",
-      items: {
-        create: [{ medicineName: "Biotin supplement", dosage: "1 tablet", frequency: "Once daily", duration: "30 days" }],
-      },
-    },
-  })
-
-  const bill = await prisma.bill.create({
-    data: {
-      billNumber: "INV-DEMO-000001",
-      patientId: patient1.id,
-      appointmentId: appointment.id,
-      serviceId: services[0].id,
-      totalAmount: 500,
-      netAmount: 500,
-      amountPaid: 500,
-      balanceDue: 0,
-      status: "PAID",
-      items: { create: [{ description: "Hairfall Review consultation", quantity: 1, unitPrice: 500, amount: 500 }] },
-    },
-  })
-
-  await prisma.payment.create({
-    data: {
-      receiptNumber: "RCPT-DEMO-000001",
-      patientId: patient1.id,
-      billId: bill.id,
-      amount: 500,
-      method: "CASH",
-      status: "SUCCESS",
-      receivedById: receptionist.id,
-    },
-  })
-  console.log("  Demo appointment/encounter/prescription/bill/payment chain created")
-
-  // ── A pending website booking, for the appointments queue ────────────
-  const pendingSlot = new Date(today)
-  pendingSlot.setDate(pendingSlot.getDate() + 1)
-  pendingSlot.setHours(19, 0, 0, 0)
-  await prisma.appointment.create({
-    data: {
-      appointmentCode: "APT-DEMO-000002",
-      patientId: patient2.id,
-      doctorId: doctor.id,
-      serviceId: services[1].id,
-      scheduledAt: pendingSlot,
-      type: "IN_PERSON",
-      status: "PENDING",
-      reason: "Recurring breakouts",
-      source: "WEBSITE",
-    },
-  })
-  console.log("  Pending website booking created")
-
-  console.log("\nDone. Login credentials (change immediately in production):")
-  console.log(`  ${admin.email} / ChangeMe123!`)
-  console.log(`  ${doctor.email} / ChangeMe123!`)
-  console.log(`  ${receptionist.email} / ChangeMe123!`)
+  console.log("\n=======================================================")
+  console.log(" ✨ Database Seeding Complete!")
+  console.log("=======================================================")
 }
 
 main()

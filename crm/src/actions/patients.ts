@@ -1,10 +1,11 @@
 "use server"
 
-import { revalidatePath } from "next/cache"
+import { safeRevalidatePath as revalidatePath } from "@/lib/revalidate"
 import { prisma } from "@/lib/prisma"
 import { getCurrentUser, requireRole } from "@/lib/auth"
-import { generateUHID } from "@/lib/sequence"
+import { generateUHID, generateAppointmentCode } from "@/lib/sequence"
 import { serializeDecimal } from "@/lib/serialize"
+import { logAudit } from "@/lib/audit"
 import {
   patientCoreSchema,
   familyMemberSchema,
@@ -38,9 +39,11 @@ export async function createPatient(input: PatientCoreInput) {
   const data = patientCoreSchema.parse(input)
   const user = await getCurrentUser()
 
+  const initialStatus = user.role === "RECEPTIONIST" ? "LOCKED_FOR_RECEPTIONIST" : "CONFIRMED"
+
   const patient = await prisma.$transaction(async (tx) => {
     const uhid = await generateUHID(tx)
-    return tx.patient.create({
+    const newPatient = await tx.patient.create({
       data: {
         uhid,
         firstName: data.firstName,
@@ -60,6 +63,9 @@ export async function createPatient(input: PatientCoreInput) {
         country: data.country || "India",
         photoUrl: data.photoUrl || null,
         registeredById: user.id,
+        registrationStatus: initialStatus,
+        lockedAt: initialStatus === "LOCKED_FOR_RECEPTIONIST" ? new Date() : null,
+        lockedById: initialStatus === "LOCKED_FOR_RECEPTIONIST" ? user.id : null,
         communicationPreference: {
           create: {
             preferredChannel: "SMS",
@@ -67,38 +73,254 @@ export async function createPatient(input: PatientCoreInput) {
         },
       },
     })
+
+    await logAudit({
+      action: "PATIENT_CREATED",
+      entityType: "Patient",
+      entityId: newPatient.id,
+      metadata: { uhid: newPatient.uhid, name: `${newPatient.firstName} ${newPatient.lastName || ""}`.trim(), status: initialStatus },
+      userId: user.id,
+      userName: user.name,
+      userRole: user.role,
+      tx,
+    })
+
+    return newPatient
   })
 
   revalidatePath("/patients")
   return patient
 }
 
+/**
+ * Atomic registration + booking for receptionist workflow.
+ * Registers patient, reserves appointment slot, and locks record for receptionist in one transaction.
+ */
+export async function registerPatientWithBooking(params: {
+  patient: PatientCoreInput
+  appointment?: {
+    doctorId: string
+    serviceId?: string
+    scheduledAt: Date
+    durationMinutes?: number
+    reason?: string
+  }
+}) {
+  const data = patientCoreSchema.parse(params.patient)
+  const user = await getCurrentUser()
+
+  const result = await prisma.$transaction(async (tx) => {
+    const uhid = await generateUHID(tx)
+    const patient = await tx.patient.create({
+      data: {
+        uhid,
+        firstName: data.firstName,
+        lastName: data.lastName || null,
+        dob: parseDob(data.dob),
+        gender: data.gender,
+        bloodGroup: data.bloodGroup ?? "UNKNOWN",
+        occupation: data.occupation || null,
+        phone: data.phone,
+        alternatePhone: data.alternatePhone || null,
+        email: cleanEmail(data.email),
+        addressLine1: data.addressLine1 || null,
+        addressLine2: data.addressLine2 || null,
+        city: data.city || null,
+        state: data.state || null,
+        postalCode: data.postalCode || null,
+        country: data.country || "India",
+        photoUrl: data.photoUrl || null,
+        registeredById: user.id,
+        registrationStatus: "LOCKED_FOR_RECEPTIONIST",
+        lockedAt: new Date(),
+        lockedById: user.id,
+        communicationPreference: {
+          create: {
+            preferredChannel: "SMS",
+          },
+        },
+      },
+    })
+
+    let appointment = null
+    if (params.appointment) {
+      // Check slot conflict inside transaction
+      const conflict = await tx.appointment.findFirst({
+        where: {
+          doctorId: params.appointment.doctorId,
+          scheduledAt: params.appointment.scheduledAt,
+          status: { in: ["PENDING", "CONFIRMED", "ARRIVED", "IN_CONSULTATION"] },
+        },
+      })
+      if (conflict) {
+        throw new Error("The selected appointment slot was just booked. Please choose another slot.")
+      }
+
+      const appointmentCode = await generateAppointmentCode(tx)
+      appointment = await tx.appointment.create({
+        data: {
+          appointmentCode,
+          patientId: patient.id,
+          doctorId: params.appointment.doctorId,
+          serviceId: params.appointment.serviceId || null,
+          scheduledAt: params.appointment.scheduledAt,
+          durationMinutes: params.appointment.durationMinutes || 15,
+          type: "IN_PERSON",
+          status: "CONFIRMED",
+          reason: params.appointment.reason || "Initial registration consultation",
+          createdById: user.id,
+          source: "CRM",
+        },
+      })
+    }
+
+    await logAudit({
+      action: "PATIENT_CREATED",
+      entityType: "Patient",
+      entityId: patient.id,
+      metadata: {
+        uhid: patient.uhid,
+        lockedForReceptionist: true,
+        appointmentId: appointment?.id,
+        appointmentCode: appointment?.appointmentCode,
+      },
+      userId: user.id,
+      userName: user.name,
+      userRole: user.role,
+      tx,
+    })
+
+    return { patient, appointment }
+  })
+
+  revalidatePath("/patients")
+  revalidatePath("/appointments")
+  revalidatePath("/queue")
+  return result
+}
+
 export async function updatePatientCore(patientId: string, input: PatientCoreInput) {
   const data = patientCoreSchema.parse(input)
-  const patient = await prisma.patient.update({
-    where: { id: patientId },
-    data: {
-      firstName: data.firstName,
-      lastName: data.lastName || null,
-      dob: parseDob(data.dob),
-      gender: data.gender,
-      bloodGroup: data.bloodGroup ?? "UNKNOWN",
-      occupation: data.occupation || null,
-      phone: data.phone,
-      alternatePhone: data.alternatePhone || null,
-      email: cleanEmail(data.email),
-      addressLine1: data.addressLine1 || null,
-      addressLine2: data.addressLine2 || null,
-      city: data.city || null,
-      state: data.state || null,
-      postalCode: data.postalCode || null,
-      country: data.country || "India",
-      photoUrl: data.photoUrl || null,
-    },
+  const user = await getCurrentUser()
+
+  const existing = await prisma.patient.findUnique({ where: { id: patientId } })
+  if (!existing) throw new Error("Patient not found")
+
+  // Critical Server-Side Locking: Receptionist cannot edit confirmed/locked registrations
+  if (user.role === "RECEPTIONIST" && existing.registrationStatus === "LOCKED_FOR_RECEPTIONIST") {
+    throw new Error("This patient registration is confirmed and locked. Only an Admin can make modifications.")
+  }
+
+  const patient = await prisma.$transaction(async (tx) => {
+    const updated = await tx.patient.update({
+      where: { id: patientId },
+      data: {
+        firstName: data.firstName,
+        lastName: data.lastName || null,
+        dob: parseDob(data.dob),
+        gender: data.gender,
+        bloodGroup: data.bloodGroup ?? "UNKNOWN",
+        occupation: data.occupation || null,
+        phone: data.phone,
+        alternatePhone: data.alternatePhone || null,
+        email: cleanEmail(data.email),
+        addressLine1: data.addressLine1 || null,
+        addressLine2: data.addressLine2 || null,
+        city: data.city || null,
+        state: data.state || null,
+        postalCode: data.postalCode || null,
+        country: data.country || "India",
+        photoUrl: data.photoUrl || null,
+      },
+    })
+
+    const isOverride = user.role === "ADMIN" && existing.registrationStatus === "LOCKED_FOR_RECEPTIONIST"
+    await logAudit({
+      action: isOverride ? "PATIENT_OVERRIDE" : "PATIENT_UPDATED",
+      entityType: "Patient",
+      entityId: patientId,
+      metadata: {
+        uhid: existing.uhid,
+        isAdminOverride: isOverride,
+        changes: { firstName: data.firstName, phone: data.phone },
+      },
+      userId: user.id,
+      userName: user.name,
+      userRole: user.role,
+      tx,
+    })
+
+    return updated
   })
+
   revalidatePath(`/patients/${patientId}`)
   revalidatePath("/patients")
   return patient
+}
+
+export async function adminUnlockPatient(patientId: string) {
+  const user = await requireRole("ADMIN")
+  const patient = await prisma.patient.update({
+    where: { id: patientId },
+    data: {
+      registrationStatus: "CONFIRMED",
+      lockedAt: null,
+      lockedById: null,
+    },
+  })
+
+  await logAudit({
+    action: "PERMISSION_OVERRIDE",
+    entityType: "Patient",
+    entityId: patientId,
+    metadata: { unlockedBy: user.name, previousStatus: "LOCKED_FOR_RECEPTIONIST" },
+  })
+
+  revalidatePath(`/patients/${patientId}`)
+  return patient
+}
+
+export async function adminLockPatient(patientId: string) {
+  const user = await requireRole("ADMIN")
+  const patient = await prisma.patient.update({
+    where: { id: patientId },
+    data: {
+      registrationStatus: "LOCKED_FOR_RECEPTIONIST",
+      lockedAt: new Date(),
+      lockedById: user.id,
+    },
+  })
+
+  await logAudit({
+    action: "PATIENT_LOCKED",
+    entityType: "Patient",
+    entityId: patientId,
+    metadata: { lockedBy: user.name },
+  })
+
+  revalidatePath(`/patients/${patientId}`)
+  return patient
+}
+
+export async function deletePatient(patientId: string) {
+  const user = await requireRole("ADMIN")
+
+  const patient = await prisma.patient.findUnique({ where: { id: patientId } })
+  if (!patient) throw new Error("Patient not found")
+
+  await prisma.patient.delete({ where: { id: patientId } })
+
+  await logAudit({
+    action: "PATIENT_DELETED",
+    entityType: "Patient",
+    entityId: patientId,
+    metadata: { uhid: patient.uhid, name: `${patient.firstName} ${patient.lastName || ""}`.trim() },
+    userId: user.id,
+    userName: user.name,
+    userRole: user.role,
+  })
+
+  revalidatePath("/patients")
 }
 
 export async function updatePatientStatus(patientId: string, status: "ACTIVE" | "INACTIVE") {
@@ -305,3 +527,22 @@ export async function upsertCommunicationPreference(patientId: string, input: Co
   })
   revalidatePath(`/patients/${patientId}`)
 }
+
+export async function getPatientPrescriptions(patientId: string) {
+  const prescriptions = await prisma.prescription.findMany({
+    where: { patientId },
+    include: {
+      doctor: true,
+      items: true,
+      encounter: {
+        include: { doctor: true, diagnoses: true },
+      },
+    },
+    orderBy: { issuedAt: "desc" },
+  })
+  return prescriptions.map((p) => ({
+    ...p,
+    doctor: serializeDecimal(p.doctor, ["consultationFee"]),
+  }))
+}
+

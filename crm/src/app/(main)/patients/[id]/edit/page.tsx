@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation"
+import { getCurrentUser } from "@/lib/auth"
 import { getPatientById } from "@/actions/patients"
 import { PatientForm } from "@/components/patients/patient-form"
 
@@ -8,7 +9,7 @@ export default async function EditPatientPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const patient = await getPatientById(id)
+  const [user, patient] = await Promise.all([getCurrentUser(), getPatientById(id)])
   if (!patient) notFound()
 
   return (
@@ -19,6 +20,8 @@ export default async function EditPatientPage({
       </div>
       <PatientForm
         patientId={patient.id}
+        isLocked={patient.registrationStatus === "LOCKED_FOR_RECEPTIONIST"}
+        userRole={user.role}
         defaultValues={{
           firstName: patient.firstName,
           lastName: patient.lastName ?? "",

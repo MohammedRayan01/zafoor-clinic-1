@@ -3,13 +3,13 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: hospital
-      POSTGRES_PASSWORD: hospital
-      POSTGRES_DB: hospital_crm
+      POSTGRES_USER: zafoor
+      POSTGRES_PASSWORD: zafoor_password
+      POSTGRES_DB: zafoor_clinic
     ports:
       - "5432:5432"
     volumes:
-      - hospital_crm_db:/var/lib/postgresql/data
+      - zafoor_clinic_db:/var/lib/postgresql/data
 
 volumes:
-  hospital_crm_db:
+  zafoor_clinic_db:

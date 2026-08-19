@@ -1,11 +1,12 @@
 const express = require("express")
-const { getActiveDoctors, getActiveServices, bookWebsiteAppointment } = require("../queries")
+const { getActiveDoctors, getActiveServices, bookWebsiteAppointment, saveContactMessage } = require("../queries")
 const { getAvailableSlots } = require("../slots")
 
 const router = express.Router()
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const PHONE_RE = /^[0-9+\-\s]{7,15}$/
+const EMAIL_RE = /^\S+@\S+\.\S+$/
 
 // GET /api/availability?doctorId=...&date=YYYY-MM-DD
 router.get("/availability", async (req, res) => {
@@ -83,6 +84,16 @@ router.post("/appointments", async (req, res) => {
       patient: { firstName, lastName: String(body.lastName || "").trim(), phone, email, gender: gender || null },
     })
 
+    console.log(
+      `\n📨 [WEBSITE BOOKING NOTIFICATION]\n` +
+      `Patient: ${firstName} (${phone})\n` +
+      `Booking ID: ${result.appointmentCode}\n` +
+      `Doctor: Dr. ${doctor.name}\n` +
+      `Service: ${service.name}\n` +
+      `Scheduled: ${new Date(scheduledAt).toLocaleString("en-IN")}\n` +
+      `--------------------------------------------------\n`
+    )
+
     res.status(201).json({
       appointmentCode: result.appointmentCode,
       service: service.name,
@@ -95,6 +106,43 @@ router.post("/appointments", async (req, res) => {
     }
     console.error("[api/appointments]", err)
     res.status(500).json({ error: "Could not create appointment. Please try again or call the clinic." })
+  }
+})
+
+// POST /api/contact — persist website inquiries directly into CRM Message table
+router.post("/contact", async (req, res) => {
+  try {
+    const body = req.body || {}
+    const errors = {}
+
+    const name = String(body.name || "").trim()
+    const email = String(body.email || "").trim()
+    const phone = String(body.phone || "").trim()
+    const subject = String(body.subject || "Website Contact Form Inquiry").trim()
+    const message = String(body.message || "").trim()
+
+    if (!name) errors.name = "Your name is required"
+    if (!message) errors.message = "Message cannot be empty"
+    if (!email && !phone) {
+      errors.email = "Please provide an email or phone number so we can respond"
+    } else {
+      if (email && !EMAIL_RE.test(email)) errors.email = "Enter a valid email address"
+      if (phone && !PHONE_RE.test(phone)) errors.phone = "Enter a valid phone number"
+    }
+
+    if (Object.keys(errors).length > 0) {
+      return res.status(400).json({ error: "Validation failed", fields: errors })
+    }
+
+    await saveContactMessage({ name, email, phone, message, subject })
+
+    res.status(201).json({
+      success: true,
+      message: "Thank you for reaching out! Your message has been sent to our clinic staff.",
+    })
+  } catch (err) {
+    console.error("[api/contact]", err)
+    res.status(500).json({ error: "Could not send your message. Please try again or call the clinic directly." })
   }
 })
 

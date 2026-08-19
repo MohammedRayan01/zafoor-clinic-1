@@ -67,6 +67,9 @@ model User {
   cashSessionsClosed CashSession[]    @relation("CashSessionClosedBy")
   expensesRecorded   Expense[]        @relation("ExpenseRecordedBy")
 
+  inventoryTransactions InventoryTransaction[] @relation("InventoryPerformedBy")
+  auditLogs             AuditLog[]             @relation("AuditUser")
+
   @@index([role])
 }
 
@@ -143,6 +146,10 @@ model Patient {
   registeredById String?
   registeredBy   User?   @relation("PatientRegisteredBy", fields: [registeredById], references: [id])
 
+  registrationStatus RegistrationStatus @default(CONFIRMED)
+  lockedAt           DateTime?
+  lockedById         String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -175,12 +182,15 @@ model Patient {
   referralNotes      ReferralNote[]
   certificates       Certificate[]
 
+  inventoryTransactions InventoryTransaction[]
+
   refunds  Refund[]
   advances PatientAdvance[]
 
   @@index([phone])
   @@index([email])
   @@index([status])
+  @@index([registrationStatus])
   @@index([firstName, lastName])
 }
 
@@ -1198,3 +1208,129 @@ model Announcement {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Registration Status & Locking
+// ─────────────────────────────────────────────────────────────────────────
+
+enum RegistrationStatus {
+  DRAFT
+  SUBMITTED
+  CONFIRMED
+  LOCKED_FOR_RECEPTIONIST
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Inventory System — Medicines, Stock In/Out, 20% Alerts
+// ─────────────────────────────────────────────────────────────────────────
+
+model InventoryItem {
+  id                       String   @id @default(cuid())
+  name                     String
+  category                 String   @default("Medicine")
+  manufacturer             String?
+  sku                      String   @unique
+  unit                     String   @default("Unit")
+  description              String?
+  currentStock             Int      @default(0)
+  referenceStock           Int      @default(20)
+  lowStockThresholdPercent Decimal  @db.Decimal(5, 2) @default(20)
+  lowStockThresholdQty     Int      @default(4)
+  unitPrice                Decimal? @db.Decimal(10, 2)
+  active                   Boolean  @default(true)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  transactions InventoryTransaction[]
+  alerts       InventoryAlert[]
+
+  @@index([category])
+  @@index([active])
+  @@index([name])
+}
+
+enum InventoryTransactionType {
+  STOCK_IN
+  STOCK_OUT
+  ADJUSTMENT
+  RETURN
+}
+
+model InventoryTransaction {
+  id            String                   @id @default(cuid())
+  itemId        String
+  item          InventoryItem            @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  type          InventoryTransactionType
+  quantity      Int
+  previousStock Int
+  newStock      Int
+  reason        String?
+  patientId     String?
+  patient       Patient?                 @relation(fields: [patientId], references: [id])
+  performedById String
+  performedBy   User                     @relation("InventoryPerformedBy", fields: [performedById], references: [id])
+  timestamp     DateTime                 @default(now())
+
+  @@index([itemId])
+  @@index([type])
+  @@index([performedById])
+  @@index([timestamp])
+}
+
+enum InventoryAlertStatus {
+  ACTIVE
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum InventoryAlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model InventoryAlert {
+  id                String                 @id @default(cuid())
+  itemId            String
+  item              InventoryItem          @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  alertType         String                 @default("LOW_STOCK")
+  severity          InventoryAlertSeverity @default(HIGH)
+  currentQuantity   Int
+  thresholdQuantity Int
+  status            InventoryAlertStatus   @default(ACTIVE)
+  acknowledgedAt    DateTime?
+  acknowledgedById  String?
+  resolvedAt        DateTime?
+  resolvedById      String?
+  notes             String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  @@index([itemId])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Audit Logging
+// ─────────────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation("AuditUser", fields: [userId], references: [id])
+  userName   String?
+  userRole   String?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  timestamp  DateTime @default(now())
+
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([timestamp])
+}
+

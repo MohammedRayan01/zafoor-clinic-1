@@ -28,6 +28,8 @@ import {
 import { PhotoUpload } from "@/components/patients/photo-upload"
 import { bloodGroupLabels, genderLabels } from "@/lib/labels"
 
+import { Lock, ShieldAlert } from "lucide-react"
+
 function toDateInputValue(date: Date | string | null | undefined) {
   if (!date) return ""
   return new Date(date).toISOString().slice(0, 10)
@@ -36,12 +38,18 @@ function toDateInputValue(date: Date | string | null | undefined) {
 export function PatientForm({
   patientId,
   defaultValues,
+  isLocked = false,
+  userRole,
 }: {
   patientId?: string
   defaultValues?: Omit<Partial<PatientCoreInput>, "dob"> & { dob?: string | Date | null }
+  isLocked?: boolean
+  userRole?: string
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
+
+  const isReceptionistLocked = isLocked && userRole === "RECEPTIONIST"
 
   const form = useForm<PatientCoreInput>({
     resolver: zodResolver(patientCoreSchema),
@@ -66,6 +74,11 @@ export function PatientForm({
   })
 
   function onSubmit(values: PatientCoreInput) {
+    if (isReceptionistLocked) {
+      toast.error("Registration is locked for receptionist. Only an Admin can make changes.")
+      return
+    }
+
     startTransition(async () => {
       try {
         if (patientId) {
@@ -87,6 +100,27 @@ export function PatientForm({
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {isReceptionistLocked && (
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-900/50 dark:bg-amber-950/30 flex items-center gap-3">
+            <Lock className="h-5 w-5 text-amber-700 dark:text-amber-400 shrink-0" />
+            <div className="text-sm text-amber-900 dark:text-amber-300">
+              <p className="font-semibold">Confirmed Registration Locked</p>
+              <p className="text-xs text-amber-800 dark:text-amber-400">
+                This patient registration is confirmed and locked. Receptionists cannot modify or delete confirmed patient records. Contact an Administrator for overrides.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {isLocked && userRole === "ADMIN" && (
+          <div className="rounded-xl border border-purple-300 bg-purple-50 p-3.5 dark:border-purple-900/50 dark:bg-purple-950/30 flex items-center gap-2.5 text-xs text-purple-900 dark:text-purple-300">
+            <ShieldAlert className="h-4 w-4 text-purple-700 shrink-0" />
+            <span>
+              <strong>Administrator Override:</strong> This registration is locked for receptionists, but you have full administrative editing privileges.
+            </span>
+          </div>
+        )}
+
         <Card>
           <CardHeader>
             <CardTitle>Identity</CardTitle>

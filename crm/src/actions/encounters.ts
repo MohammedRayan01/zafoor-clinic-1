@@ -73,10 +73,25 @@ export async function getEncounter(encounterId: string) {
 export async function getEncountersForPatient(patientId: string) {
   const encounters = await prisma.encounter.findMany({
     where: { patientId },
-    include: { doctor: true, diagnoses: true },
+    include: {
+      doctor: true,
+      diagnoses: { orderBy: { createdAt: "desc" } },
+      vitals: { orderBy: { recordedAt: "desc" } },
+      clinicalNote: true,
+      prescriptions: { include: { items: true, doctor: true } },
+      reports: { include: { labResults: true } },
+    },
     orderBy: { encounterDate: "desc" },
   })
-  return encounters.map((e) => ({ ...e, doctor: serializeDecimal(e.doctor, ["consultationFee"]) }))
+  return encounters.map((e) => ({
+    ...e,
+    doctor: serializeDecimal(e.doctor, ["consultationFee"]),
+    vitals: e.vitals.map((v) => serializeDecimal(v, ["heightCm", "weightKg", "bmi", "temperatureC"])),
+    prescriptions: e.prescriptions.map((p) => ({
+      ...p,
+      doctor: serializeDecimal(p.doctor, ["consultationFee"]),
+    })),
+  }))
 }
 
 export async function getActiveEncounterForAppointment(appointmentId: string) {

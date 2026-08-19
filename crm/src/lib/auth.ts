@@ -1,6 +1,6 @@
-import "server-only"
 import { cache } from "react"
 import { cookies } from "next/headers"
+import { redirect } from "next/navigation"
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto"
 import { prisma } from "@/lib/prisma"
 import { serializeDecimal } from "@/lib/serialize"
@@ -51,20 +51,26 @@ export async function destroySession() {
 
 /** Reads the session cookie and returns the signed-in user, or null. Cached per-request. */
 export const getCurrentUserOrNull = cache(async () => {
-  const cookieStore = await cookies()
-  const sessionId = cookieStore.get(SESSION_COOKIE)?.value
-  if (!sessionId) return null
+  try {
+    const cookieStore = await cookies()
+    const sessionId = cookieStore.get(SESSION_COOKIE)?.value
+    if (!sessionId) return null
 
-  const session = await prisma.session.findUnique({ where: { id: sessionId }, include: { user: true } })
-  if (!session || session.expiresAt < new Date() || !session.user.active) return null
+    const session = await prisma.session.findUnique({ where: { id: sessionId }, include: { user: true } })
+    if (!session || session.expiresAt < new Date() || !session.user.active) return null
 
-  return session.user
+    return session.user
+  } catch {
+    return null
+  }
 })
 
-/** Same as `getCurrentUserOrNull` but throws — use inside server actions/pages that require auth. */
+/** Same as `getCurrentUserOrNull` but redirects to /login if unauthenticated — use inside server actions/pages that require auth. */
 export async function getCurrentUser() {
   const user = await getCurrentUserOrNull()
-  if (!user) throw new Error("Not authenticated")
+  if (!user) {
+    redirect("/login")
+  }
   return user
 }
 

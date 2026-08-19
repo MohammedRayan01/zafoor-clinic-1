@@ -1,6 +1,4 @@
-// Single source of truth: this pool points at the SAME Postgres database
-// the CRM (crm/prisma/schema.prisma) uses. No separate/duplicate database —
-// a booking made here is a row the CRM sees immediately, and vice versa.
+require("dotenv/config")
 const { Pool } = require("pg")
 
 if (!process.env.DATABASE_URL) {
