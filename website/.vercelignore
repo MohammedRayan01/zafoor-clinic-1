@@ -1,8 +1,0 @@
-# Videos (~212MB) are excluded from Vercel deployments to keep uploads
-# fast and reliable. They're still in git/local dev (src/public/videos).
-# For production, move them to a CDN/object store and point the <video>
-# src attributes at that instead (see root README "Known limitations").
-src/public/videos
-node_modules
-.env
-.env.local

@@ -1,1 +1,5 @@
 .vercel
+
+# Next.js auto-generates these agent instruction files on every `next dev`
+crm/AGENTS.md
+crm/CLAUDE.md
