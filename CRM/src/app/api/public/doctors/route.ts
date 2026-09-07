@@ -11,7 +11,7 @@ export async function GET(request: Request) {
     select: { id: true, name: true, specialization: true },
   })
 
-  return json(request, doctors)
+  return json(request, doctors, 200, 300) // staff roster rarely changes — safe to serve up to 5 min stale at the edge
 }
 
 export async function OPTIONS(request: Request) {

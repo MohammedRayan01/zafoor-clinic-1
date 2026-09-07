@@ -6,6 +6,8 @@ import { prisma } from "@/lib/prisma"
 import { requireRole } from "@/lib/auth"
 import { toPlain } from "@/lib/serialize"
 import { expenseSchema, type ExpenseInput } from "@/lib/validations/billing"
+import { classifyServiceName } from "@/lib/care-category"
+import { careCategoryLabels } from "@/lib/labels"
 
 // ── Expenses ────────────────────────────────────────────────────────────
 
@@ -119,7 +121,7 @@ export async function getRevenueDashboard() {
 
   const revenueByService: Record<string, number> = {}
   for (const b of bills) {
-    const label = b.service?.name ?? "Other"
+    const label = careCategoryLabels[classifyServiceName(b.service?.name)]
     revenueByService[label] = (revenueByService[label] ?? 0) + Number(b.netAmount)
   }
 
@@ -164,7 +166,7 @@ export async function getFinancialReport(from: Date, to: Date) {
 
   const revenueByService: Record<string, number> = {}
   for (const b of bills) {
-    const label = b.service?.name ?? "Other"
+    const label = careCategoryLabels[classifyServiceName(b.service?.name)]
     revenueByService[label] = (revenueByService[label] ?? 0) + Number(b.netAmount)
   }
 

@@ -19,15 +19,17 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  const hasSession = request.cookies.has(SESSION_COOKIE)
-
   if (PUBLIC_PATHS.includes(pathname)) {
-    if (hasSession) {
-      return NextResponse.redirect(new URL("/dashboard", request.url))
-    }
+    // Don't redirect away from /login based on cookie presence alone — a
+    // stale/expired cookie would bounce here (via getCurrentUser's redirect
+    // on invalid session) only to be sent straight back to /dashboard,
+    // looping forever. The login page itself already does the real
+    // DB-backed check (getCurrentUserOrNull) and redirects when genuinely
+    // signed in.
     return NextResponse.next()
   }
 
+  const hasSession = request.cookies.has(SESSION_COOKIE)
   if (!hasSession) {
     const loginUrl = new URL("/login", request.url)
     return NextResponse.redirect(loginUrl)

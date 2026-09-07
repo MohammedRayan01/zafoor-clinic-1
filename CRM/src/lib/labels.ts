@@ -16,6 +16,12 @@ export const genderLabels: Record<string, string> = {
   OTHER: "Other",
 }
 
+export const careCategoryLabels: Record<string, string> = {
+  SKIN_HAIR_LASER: "Skin, Hair & Laser",
+  DIABETOLOGY: "Diabetology",
+  GENERAL_MEDICINE: "General Medicine",
+}
+
 export const patientStatusLabels: Record<string, string> = {
   ACTIVE: "Active",
   INACTIVE: "Inactive",

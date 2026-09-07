@@ -60,9 +60,20 @@ function corsHeaders(request: Request): Record<string, string> {
   return headers
 }
 
-/** JSON response carrying the CORS headers for this request's origin. */
-export function json(request: Request, body: unknown, status = 200) {
-  return NextResponse.json(body, { status, headers: corsHeaders(request) })
+/**
+ * JSON response carrying the CORS headers for this request's origin.
+ * Pass `cacheSeconds` for endpoints safe to serve slightly stale (the
+ * catalog-ish ones — services, doctors) so the CDN/edge answers repeat
+ * visitor requests without invoking the function or touching Supabase at
+ * all. Never pass it for anything real-time (availability, booking state) —
+ * a cached "free" slot could get double-booked.
+ */
+export function json(request: Request, body: unknown, status = 200, cacheSeconds?: number) {
+  const headers = corsHeaders(request)
+  if (cacheSeconds) {
+    headers["Cache-Control"] = `public, s-maxage=${cacheSeconds}, stale-while-revalidate=${cacheSeconds * 4}`
+  }
+  return NextResponse.json(body, { status, headers })
 }
 
 /** `{ error }` JSON response. */

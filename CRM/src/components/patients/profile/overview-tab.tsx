@@ -17,6 +17,8 @@ import {
   CheckCircle2,
   Phone,
   Plus,
+  Droplet,
+  Ruler,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -35,7 +37,15 @@ import {
   appointmentStatusLabels,
   appointmentTypeLabels,
   followUpStatusLabels,
+  bloodGroupLabels,
 } from "@/lib/labels"
+
+function bmiCategory(bmi: number) {
+  if (bmi < 18.5) return "Underweight"
+  if (bmi < 25) return "Normal"
+  if (bmi < 30) return "Overweight"
+  return "Obese"
+}
 import { formatDate, formatDateTime } from "@/lib/format"
 
 type Patient = NonNullable<Awaited<ReturnType<typeof getPatientById>>>
@@ -71,8 +81,84 @@ export function OverviewTab({
   const certificatesCount = records?.certificates?.length || 0
   const totalDocuments = patient.documents.length + reports.length + referralNotesCount + certificatesCount
 
+  // Most recent visit's recorded vitals, across all encounters (already ordered newest-first).
+  const lastVisit = encounters.find((e) => e.vitals && e.vitals.length > 0)
+  const lastVitals = lastVisit?.vitals?.[0]
+  const currentHeight = patient.heightCm != null ? Number(patient.heightCm) : null
+  const currentWeight = patient.weightKg != null ? Number(patient.weightKg) : null
+  const currentBmi =
+    currentHeight && currentWeight ? currentWeight / ((currentHeight / 100) * (currentHeight / 100)) : null
+
   return (
     <div className="space-y-6">
+      {/* ── 0. Health Summary — blood group, height/weight/BMI/BP now vs last visit, medical history ── */}
+      <Card>
+        <CardHeader className="flex flex-row items-center gap-2 pb-2">
+          <HeartPulse className="h-4 w-4 text-primary" />
+          <CardTitle className="text-base">Health Summary</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground flex items-center gap-1"><Droplet className="h-3 w-3" /> Blood Group</p>
+              <p className="text-lg font-bold mt-0.5">{bloodGroupLabels[patient.bloodGroup ?? "UNKNOWN"] ?? "Unknown"}</p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground flex items-center gap-1"><Ruler className="h-3 w-3" /> Height / Weight</p>
+              <p className="text-lg font-bold mt-0.5">
+                {currentHeight ?? "—"} cm · {currentWeight ?? "—"} kg
+              </p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground flex items-center gap-1"><Activity className="h-3 w-3" /> BMI (current)</p>
+              <p className="text-lg font-bold mt-0.5">
+                {currentBmi ? `${currentBmi.toFixed(1)} · ${bmiCategory(currentBmi)}` : "—"}
+              </p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground flex items-center gap-1"><Stethoscope className="h-3 w-3" /> Last Visit BP</p>
+              <p className="text-lg font-bold mt-0.5">
+                {lastVitals?.bpSystolic && lastVitals?.bpDiastolic
+                  ? `${lastVitals.bpSystolic}/${lastVitals.bpDiastolic} mmHg`
+                  : "—"}
+              </p>
+            </div>
+          </div>
+
+          {lastVisit && lastVitals && (
+            <div className="rounded-lg border border-dashed bg-muted/20 p-3 text-xs">
+              <p className="font-semibold text-foreground mb-1">
+                Vitals at last visit — {formatDate(lastVisit.encounterDate)}
+              </p>
+              <div className="flex flex-wrap gap-3 text-muted-foreground">
+                {lastVitals.heightCm != null && <span>Height: <strong className="text-foreground">{String(lastVitals.heightCm)} cm</strong></span>}
+                {lastVitals.weightKg != null && <span>Weight: <strong className="text-foreground">{String(lastVitals.weightKg)} kg</strong></span>}
+                {lastVitals.bmi != null && <span>BMI: <strong className="text-foreground">{String(lastVitals.bmi)}</strong></span>}
+                {lastVitals.pulseBpm != null && <span>Pulse: <strong className="text-foreground">{lastVitals.pulseBpm} bpm</strong></span>}
+                {lastVitals.temperatureC != null && <span>Temp: <strong className="text-foreground">{String(lastVitals.temperatureC)} °C</strong></span>}
+                {lastVitals.spo2 != null && <span>SpO2: <strong className="text-foreground">{lastVitals.spo2}%</strong></span>}
+              </div>
+            </div>
+          )}
+
+          {patient.medicalHistory.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-foreground mb-1.5">Previous Medical History</p>
+              <div className="space-y-1.5">
+                {patient.medicalHistory.map((h) => (
+                  <div key={h.id} className="text-xs rounded border bg-muted/20 p-2 flex items-start justify-between gap-2">
+                    <span>{h.description}</span>
+                    <span className="text-muted-foreground shrink-0">
+                      {h.occurredOn ? formatDate(h.occurredOn) : formatDate(h.createdAt)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* ── 1. Medical Critical Alerts ──────────────────────────────────── */}
       {activeAlerts.length > 0 && (
         <Card className="border-red-200 bg-red-50/40 dark:border-red-900/60 dark:bg-red-950/20">
@@ -95,7 +181,7 @@ export function OverviewTab({
 
       {/* ── 2. Quick Clinical & Appointment Metrics Grid ────────────────── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Card className="p-4 flex items-center gap-3">
+        <Card className="p-4 flex flex-row items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Calendar className="h-5 w-5" />
           </div>
@@ -105,7 +191,7 @@ export function OverviewTab({
           </div>
         </Card>
 
-        <Card className="p-4 flex items-center gap-3">
+        <Card className="p-4 flex flex-row items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-400">
             <Stethoscope className="h-5 w-5" />
           </div>
@@ -115,7 +201,7 @@ export function OverviewTab({
           </div>
         </Card>
 
-        <Card className="p-4 flex items-center gap-3">
+        <Card className="p-4 flex flex-row items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-teal-500/10 text-teal-600 dark:bg-teal-950/40 dark:text-teal-400">
             <Pill className="h-5 w-5" />
           </div>
@@ -125,7 +211,7 @@ export function OverviewTab({
           </div>
         </Card>
 
-        <Card className="p-4 flex items-center gap-3">
+        <Card className="p-4 flex flex-row items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400">
             <FileText className="h-5 w-5" />
           </div>

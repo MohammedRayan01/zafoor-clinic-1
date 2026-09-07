@@ -27,6 +27,7 @@ import {
   HelpCircle,
   Boxes,
   ShieldAlert,
+  IndianRupee,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { hasTabAccess } from "@/lib/permissions"
@@ -81,6 +82,7 @@ const navGroups: NavGroup[] = [
     dot: "bg-emerald-500",
     text: "text-emerald-600 dark:text-emerald-400",
     items: [
+      { href: "/payments", label: "Payments", icon: IndianRupee },
       { href: "/billing", label: "Billing", icon: Receipt },
       { href: "/billing/refunds", label: "Refunds", icon: Undo2 },
       { href: "/finance/dashboard", label: "Finance Dashboard", icon: TrendingUp },

@@ -9,6 +9,21 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/**": ["./src/generated/prisma/**/*"],
   },
+
+  // uploadFile() prefers Vercel Blob / Supabase Storage (both already served
+  // through a CDN with long cache headers — see src/actions/upload.ts); this
+  // local-disk /public/uploads path is only the last-resort fallback when
+  // neither is configured. Filenames there are unique per upload (nanoid) and
+  // never change, so cache them just as aggressively to keep repeat views off
+  // Vercel's own bandwidth.
+  async headers() {
+    return [
+      {
+        source: "/uploads/:path*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

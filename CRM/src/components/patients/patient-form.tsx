@@ -25,8 +25,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
 import { PhotoUpload } from "@/components/patients/photo-upload"
-import { bloodGroupLabels, genderLabels } from "@/lib/labels"
+import { bloodGroupLabels, genderLabels, careCategoryLabels } from "@/lib/labels"
+
+function bmiCategory(bmi: number) {
+  if (bmi < 18.5) return { label: "Underweight", className: "text-blue-600 dark:text-blue-400" }
+  if (bmi < 25) return { label: "Normal", className: "text-emerald-600 dark:text-emerald-400" }
+  if (bmi < 30) return { label: "Overweight", className: "text-amber-600 dark:text-amber-400" }
+  return { label: "Obese", className: "text-red-600 dark:text-red-400" }
+}
 
 import { Lock, ShieldAlert } from "lucide-react"
 
@@ -60,6 +68,11 @@ export function PatientForm({
       gender: defaultValues?.gender,
       bloodGroup: defaultValues?.bloodGroup ?? "UNKNOWN",
       occupation: defaultValues?.occupation ?? "",
+      careCategory: defaultValues?.careCategory,
+      heightCm: defaultValues?.heightCm,
+      weightKg: defaultValues?.weightKg,
+      medicalHistoryNotes: "",
+      allergyNotes: "",
       phone: defaultValues?.phone ?? "",
       alternatePhone: defaultValues?.alternatePhone ?? "",
       email: defaultValues?.email ?? "",
@@ -72,6 +85,13 @@ export function PatientForm({
       photoUrl: defaultValues?.photoUrl ?? "",
     },
   })
+
+  const height = form.watch("heightCm")
+  const weight = form.watch("weightKg")
+  const bmi =
+    height && weight && height > 0
+      ? weight / ((height / 100) * (height / 100))
+      : null
 
   function onSubmit(values: PatientCoreInput) {
     if (isReceptionistLocked) {
@@ -233,6 +253,30 @@ export function PatientForm({
               />
               <FormField
                 control={form.control}
+                name="careCategory"
+                render={({ field }) => (
+                  <FormItem className="sm:col-span-2">
+                    <FormLabel>Reason for Visit *</FormLabel>
+                    <Select items={careCategoryLabels} onValueChange={field.onChange} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="What is the patient coming in for?" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {Object.entries(careCategoryLabels).map(([value, label]) => (
+                          <SelectItem key={value} value={value}>
+                            {label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
                 name="occupation"
                 render={({ field }) => (
                   <FormItem>
@@ -244,6 +288,55 @@ export function PatientForm({
                   </FormItem>
                 )}
               />
+              <FormField
+                control={form.control}
+                name="heightCm"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Height (cm)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        step="0.1"
+                        placeholder="e.g. 170"
+                        value={field.value ?? ""}
+                        onChange={(e) => field.onChange(e.target.value === "" ? undefined : Number(e.target.value))}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="weightKg"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Weight (kg)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        step="0.1"
+                        placeholder="e.g. 68"
+                        value={field.value ?? ""}
+                        onChange={(e) => field.onChange(e.target.value === "" ? undefined : Number(e.target.value))}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              {bmi != null && (
+                <div className="flex items-end sm:col-span-2">
+                  <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+                    <span className="text-muted-foreground">BMI: </span>
+                    <span className="font-semibold">{bmi.toFixed(1)}</span>
+                    <span className={`ml-2 font-medium ${bmiCategory(bmi).className}`}>
+                      {bmiCategory(bmi).label}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -380,6 +473,49 @@ export function PatientForm({
             />
           </CardContent>
         </Card>
+
+        {!patientId && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Medical Background</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <FormField
+                control={form.control}
+                name="medicalHistoryNotes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Previous medical history (optional)</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        placeholder="Past surgeries, ongoing conditions, chronic illnesses, family history, etc."
+                        rows={4}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="allergyNotes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Known allergies (optional)</FormLabel>
+                    <FormControl>
+                      <Input placeholder="e.g. Penicillin, Peanuts, Dust — comma separated" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <p className="text-xs text-muted-foreground">
+                Saved to this patient&apos;s Medical History and Allergies. Chronic conditions and severity levels can be added in detail from the Medical tab after registration.
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
         <div className="flex justify-end gap-3">
           <Button type="button" variant="outline" onClick={() => router.back()}>

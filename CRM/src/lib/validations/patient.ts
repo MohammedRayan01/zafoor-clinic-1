@@ -4,13 +4,19 @@ export const genderEnum = z.enum(["MALE", "FEMALE", "OTHER"])
 export const bloodGroupEnum = z.enum([
   "A_POS", "A_NEG", "B_POS", "B_NEG", "AB_POS", "AB_NEG", "O_POS", "O_NEG", "UNKNOWN",
 ])
+export const careCategoryEnum = z.enum(["SKIN_HAIR_LASER", "DIABETOLOGY", "GENERAL_MEDICINE"])
 export const patientCoreSchema = z.object({
   firstName: z.string().trim().min(1, "First name is required"),
+  careCategory: careCategoryEnum,
   lastName: z.string().trim().optional(),
   dob: z.string().optional(),
   gender: genderEnum.optional(),
   bloodGroup: bloodGroupEnum.optional(),
   occupation: z.string().trim().optional(),
+  heightCm: z.number().positive().max(300).optional(),
+  weightKg: z.number().positive().max(500).optional(),
+  medicalHistoryNotes: z.string().trim().optional(),
+  allergyNotes: z.string().trim().optional(),
   phone: z.string().trim().min(7, "Enter a valid phone number"),
   alternatePhone: z.string().trim().optional(),
   email: z.string().trim().email().optional().or(z.literal("")),

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useTransition } from "react"
+import { useEffect, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
@@ -11,6 +11,9 @@ import {
   Building,
   CheckCircle2,
   Receipt,
+  Upload,
+  Loader2,
+  FileText,
 } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -19,6 +22,8 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { formatCurrency } from "@/lib/format"
 import { collectPayment, getPatientAdvanceBalance } from "@/actions/payments"
+import { addDocument } from "@/actions/patients"
+import { uploadFile } from "@/actions/upload"
 
 type PaymentMethodType = "CASH" | "UPI" | "CARD" | "NET_BANKING" | "ADVANCE"
 
@@ -50,14 +55,32 @@ export function CollectPaymentDialog({
   const [referenceNumber, setReferenceNumber] = useState("")
   const [cashTendered, setCashTendered] = useState("")
   const [advanceBalance, setAdvanceBalance] = useState<number | null>(null)
+  const [prescriptionFile, setPrescriptionFile] = useState<{ url: string; type: string; name: string } | null>(null)
+  const [uploadingPrescription, setUploadingPrescription] = useState(false)
+  const prescriptionInputRef = useRef<HTMLInputElement>(null)
   const [pending, startTransition] = useTransition()
   const router = useRouter()
 
   useEffect(() => {
     if (!open) return
     setAmount(String(balanceDue))
+    setPrescriptionFile(null)
     getPatientAdvanceBalance(patientId).then(setAdvanceBalance)
   }, [open, patientId, balanceDue])
+
+  async function handlePrescriptionFile(file: File) {
+    setUploadingPrescription(true)
+    try {
+      const fd = new FormData()
+      fd.set("file", file)
+      const result = await uploadFile(fd)
+      setPrescriptionFile({ url: result.url, type: result.type, name: file.name })
+    } catch {
+      toast.error("Prescription upload failed")
+    } finally {
+      setUploadingPrescription(false)
+    }
+  }
 
   const numAmount = Number(amount) || 0
   const numTendered = Number(cashTendered) || 0
@@ -92,6 +115,20 @@ export function CollectPaymentDialog({
                   method,
                   referenceNumber: referenceNumber.trim() || undefined,
                 })
+
+                if (prescriptionFile) {
+                  try {
+                    await addDocument(patientId, {
+                      title: `Prescription — Receipt #${res.receiptNumber}`,
+                      category: "PRESCRIPTION",
+                      fileUrl: prescriptionFile.url,
+                      fileType: prescriptionFile.type,
+                    })
+                  } catch {
+                    toast.error("Payment recorded, but the prescription upload failed to save. Please attach it from the patient's Documents tab.")
+                  }
+                }
+
                 toast.success(`Payment collected! Receipt #${res.receiptNumber} issued.`)
                 setOpen(false)
                 router.refresh()
@@ -276,7 +313,43 @@ export function CollectPaymentDialog({
             </div>
           )}
 
-          <Button type="submit" disabled={pending || numAmount <= 0} className="w-full h-10 font-semibold gap-2">
+          {/* Attach Prescription (Optional) */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">Attach Prescription (Optional)</Label>
+            <input
+              ref={prescriptionInputRef}
+              type="file"
+              accept="image/*,.pdf"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) handlePrescriptionFile(file)
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full gap-1.5 justify-start text-muted-foreground"
+              onClick={() => prescriptionInputRef.current?.click()}
+              disabled={uploadingPrescription}
+            >
+              {uploadingPrescription ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : prescriptionFile ? (
+                <FileText className="h-4 w-4 text-primary" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
+              <span className="truncate">
+                {prescriptionFile ? prescriptionFile.name : "Upload prescription (image or PDF)"}
+              </span>
+            </Button>
+            <p className="text-[11px] text-muted-foreground">
+              Saved to the patient&apos;s Documents tab, linked to this receipt.
+            </p>
+          </div>
+
+          <Button type="submit" disabled={pending || numAmount <= 0 || uploadingPrescription} className="w-full h-10 font-semibold gap-2">
             {pending ? "Recording & Generating Receipt…" : `Confirm & Collect ${formatCurrency(numAmount)} (${PAYMENT_MODES.find((m) => m.id === method)?.label})`}
           </Button>
         </form>

@@ -58,7 +58,9 @@ export async function GET(request: Request) {
       price: s.price == null ? null : Number(s.price),
       durationMinutes: s.durationMinutes,
       departmentId: getDepartmentId(s.name),
-    }))
+    })),
+    200,
+    300 // catalog rarely changes — safe to serve up to 5 min stale at the edge
   )
 }
 
