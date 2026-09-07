@@ -209,7 +209,7 @@ export function PatientForm({
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Gender</FormLabel>
-                    <Select items={genderLabels} onValueChange={field.onChange} value={field.value}>
+                    <Select items={genderLabels} onValueChange={field.onChange} value={field.value ?? ""}>
                       <FormControl>
                         <SelectTrigger className="w-full">
                           <SelectValue placeholder="Select gender" />
@@ -257,7 +257,7 @@ export function PatientForm({
                 render={({ field }) => (
                   <FormItem className="sm:col-span-2">
                     <FormLabel>Reason for Visit *</FormLabel>
-                    <Select items={careCategoryLabels} onValueChange={field.onChange} value={field.value}>
+                    <Select items={careCategoryLabels} onValueChange={field.onChange} value={field.value ?? ""}>
                       <FormControl>
                         <SelectTrigger className="w-full">
                           <SelectValue placeholder="What is the patient coming in for?" />

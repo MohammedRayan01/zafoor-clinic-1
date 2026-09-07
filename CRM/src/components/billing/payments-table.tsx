@@ -16,12 +16,21 @@ import {
 } from "@/components/ui/select"
 import { Card, CardContent } from "@/components/ui/card"
 import { formatCurrency, formatDateTime } from "@/lib/format"
-import { markPatientPaymentPaid, type PatientPaymentRow } from "@/actions/patient-payments"
+import { setPatientPaymentStatus, type PatientPaymentRow } from "@/actions/patient-payments"
 
-const statusLabels: Record<string, string> = { PENDING: "Pending", PAID: "Paid" }
+const statusLabels: Record<string, string> = {
+  PENDING: "Pending",
+  PARTIALLY_PAID: "Partially Paid",
+  PAID: "Paid",
+  CANCELLED: "Cancelled",
+  REFUNDED: "Refunded",
+}
 const statusColors: Record<string, string> = {
   PENDING: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400",
+  PARTIALLY_PAID: "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-400",
   PAID: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400",
+  CANCELLED: "bg-muted text-muted-foreground",
+  REFUNDED: "bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-400",
 }
 
 export function PaymentsTable({ payments }: { payments: PatientPaymentRow[] }) {
@@ -74,6 +83,7 @@ export function PaymentsTable({ payments }: { payments: PatientPaymentRow[] }) {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="px-4 py-3 font-medium">Bill #</th>
                     <th className="px-4 py-3 font-medium">Patient</th>
                     <th className="px-4 py-3 font-medium">Date</th>
                     <th className="px-4 py-3 font-medium">Amount</th>
@@ -100,13 +110,14 @@ export function PaymentsTable({ payments }: { payments: PatientPaymentRow[] }) {
 function PaymentRow({ payment }: { payment: PatientPaymentRow }) {
   const [pending, startTransition] = useTransition()
   const isPaid = payment.status === "PAID"
+  const locked = payment.status === "CANCELLED" || payment.status === "REFUNDED"
 
-  function handleMarkPaid(checked: boolean) {
-    if (!checked || isPaid) return
+  function handleToggle(checked: boolean) {
+    const nextStatus = checked ? "PAID" : "PENDING"
     startTransition(async () => {
       try {
-        await markPatientPaymentPaid(payment.id)
-        toast.success("Payment marked as paid")
+        await setPatientPaymentStatus(payment.id, nextStatus)
+        toast.success(checked ? "Bill marked as paid" : "Bill reverted to pending")
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Could not update payment")
       }
@@ -115,6 +126,11 @@ function PaymentRow({ payment }: { payment: PatientPaymentRow }) {
 
   return (
     <tr className="border-b last:border-0 hover:bg-muted/30">
+      <td className="px-4 py-3">
+        <Link href={`/billing/${payment.id}`} className="font-medium hover:underline">
+          {payment.billNumber}
+        </Link>
+      </td>
       <td className="px-4 py-3">
         <Link href={`/patients/${payment.patientId}`} className="font-medium hover:underline">
           {payment.patientFirstName} {payment.patientLastName ?? ""}
@@ -133,7 +149,7 @@ function PaymentRow({ payment }: { payment: PatientPaymentRow }) {
       <td className="px-4 py-3">
         <div className="flex items-center justify-end gap-2">
           <span className="text-xs text-muted-foreground">Mark Paid</span>
-          <Checkbox checked={isPaid} disabled={isPaid || pending} onCheckedChange={handleMarkPaid} />
+          <Checkbox checked={isPaid} disabled={pending || locked} onCheckedChange={handleToggle} />
         </div>
       </td>
     </tr>

@@ -42,5 +42,10 @@ export const waitingListSchema = z.object({
   requestedDate: z.coerce.date().optional().nullable(),
   reason: z.string().trim().optional(),
   priority: z.coerce.number().int().default(0),
+  bpSystolic: z.number().int().positive("Required"),
+  bpDiastolic: z.number().int().positive("Required"),
+  heightCm: z.number().positive("Required"),
+  weightKg: z.number().positive("Required"),
+  temperatureC: z.number().positive("Required"),
 })
 export type WaitingListInput = z.infer<typeof waitingListSchema>

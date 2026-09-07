@@ -40,6 +40,15 @@ export function AddWaitingListDialog({ doctors }: { doctors: Doctor[] }) {
               toast.error("Select a patient")
               return
             }
+            const bpSystolic = Number(fd.get("bpSystolic"))
+            const bpDiastolic = Number(fd.get("bpDiastolic"))
+            const heightCm = Number(fd.get("heightCm"))
+            const weightKg = Number(fd.get("weightKg"))
+            const temperatureC = Number(fd.get("temperatureC"))
+            if (!bpSystolic || !bpDiastolic || !heightCm || !weightKg || !temperatureC) {
+              toast.error("BP, height, weight, and temperature are required")
+              return
+            }
             startTransition(async () => {
               try {
                 await addToWaitingList({
@@ -48,6 +57,11 @@ export function AddWaitingListDialog({ doctors }: { doctors: Doctor[] }) {
                   requestedDate: fd.get("requestedDate") ? new Date(String(fd.get("requestedDate"))) : undefined,
                   reason: String(fd.get("reason") || "") || undefined,
                   priority: Number(fd.get("priority") || 0),
+                  bpSystolic,
+                  bpDiastolic,
+                  heightCm,
+                  weightKg,
+                  temperatureC,
                 })
                 toast.success("Added to waiting list")
                 setOpen(false)
@@ -61,6 +75,28 @@ export function AddWaitingListDialog({ doctors }: { doctors: Doctor[] }) {
           <div className="space-y-1.5">
             <Label>Patient</Label>
             <PatientPicker value={patientId} onChange={setPatientId} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="bpSystolic">BP Systolic (mmHg) *</Label>
+              <Input id="bpSystolic" name="bpSystolic" type="number" placeholder="e.g. 120" required />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="bpDiastolic">BP Diastolic (mmHg) *</Label>
+              <Input id="bpDiastolic" name="bpDiastolic" type="number" placeholder="e.g. 80" required />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="heightCm">Height (cm) *</Label>
+              <Input id="heightCm" name="heightCm" type="number" step="0.1" placeholder="e.g. 170" required />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="weightKg">Weight (kg) *</Label>
+              <Input id="weightKg" name="weightKg" type="number" step="0.1" placeholder="e.g. 68" required />
+            </div>
+            <div className="space-y-1.5 col-span-2">
+              <Label htmlFor="temperatureC">Temperature (°C) *</Label>
+              <Input id="temperatureC" name="temperatureC" type="number" step="0.1" placeholder="e.g. 37.0" required />
+            </div>
           </div>
           <div className="space-y-1.5">
             <Label>Preferred doctor</Label>

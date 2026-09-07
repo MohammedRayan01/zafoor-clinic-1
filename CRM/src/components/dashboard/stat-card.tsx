@@ -26,13 +26,13 @@ export function StatCard({
 
   return (
     <Card>
-      <CardContent className="flex items-center gap-4 py-5">
-        <div className={cn("flex h-11 w-11 shrink-0 items-center justify-center rounded-xl", toneClasses[tone])}>
-          <Icon className="h-5 w-5" />
+      <CardContent className="flex items-center gap-2.5 py-3.5 sm:gap-4 sm:py-5">
+        <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg sm:h-11 sm:w-11 sm:rounded-xl", toneClasses[tone])}>
+          <Icon className="h-4 w-4 sm:h-5 sm:w-5" />
         </div>
         <div className="min-w-0">
-          <p className="text-2xl font-semibold leading-tight">{value}</p>
-          <p className="text-sm text-muted-foreground truncate">{label}</p>
+          <p className="text-xl font-semibold leading-tight sm:text-2xl">{value}</p>
+          <p className="text-xs text-muted-foreground leading-snug sm:text-sm">{label}</p>
           {hint && <p className="text-xs text-muted-foreground/80 mt-0.5">{hint}</p>}
         </div>
       </CardContent>

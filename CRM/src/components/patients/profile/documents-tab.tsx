@@ -21,6 +21,7 @@ import { formatDateTime } from "@/lib/format"
 import { documentCategoryLabels } from "@/lib/labels"
 import { addDocument, deleteDocument } from "@/actions/patients"
 import { uploadFile } from "@/actions/upload"
+import { compressImageClientSide } from "@/lib/client-image-compress"
 import type { getPatientById } from "@/actions/patients"
 
 type Patient = NonNullable<Awaited<ReturnType<typeof getPatientById>>>
@@ -78,8 +79,9 @@ function DocumentForm({ patientId, onDone }: { patientId: string; onDone: () => 
   async function handleFile(file: File) {
     setUploading(true)
     try {
+      const compressed = await compressImageClientSide(file)
       const fd = new FormData()
-      fd.set("file", file)
+      fd.set("file", compressed)
       const result = await uploadFile(fd)
       setFileInfo({ url: result.url, type: result.type })
     } catch {

@@ -18,7 +18,7 @@ export default async function DashboardPage() {
         <p className="text-sm text-muted-foreground">Today at a glance across Zafoor Clinic.</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-6">
         <StatCard label="New Patients" value={stats.newPatientsToday} icon={UserPlus} tone="default" />
         <StatCard label="Returning Patients" value={stats.returningPatientsToday} icon={Repeat} tone="accent" />
         <StatCard label="Today's Appointments" value={stats.todayAppointmentsCount} icon={CalendarClock} tone="info" />

@@ -1,6 +1,46 @@
 import { getSupabase } from "./supabase"
 import { nanoid } from "nanoid"
 
+/**
+ * Prisma-style nested writes (`items: { create: [...] }`) used throughout
+ * src/actions/*.ts assume a real Prisma client, which understands the schema
+ * and performs the child inserts itself. This wrapper talks to PostgREST
+ * directly and has no such awareness — without this map, `create()` used to
+ * spread the nested `{ create: ... }` object straight into the parent row's
+ * insert payload, which PostgREST rejects ("Could not find the 'x' column").
+ * Maps "ParentTable.relationField" -> the child table and the FK column on
+ * it that must be set to the parent's id.
+ */
+/**
+ * Models with an `@updatedAt` field in schema.prisma. A real Prisma client
+ * stamps this itself on every write; this wrapper talks to PostgREST
+ * directly and never did, which is silently wrong on update() (the column
+ * goes stale forever) and outright fails create() wherever the column has
+ * no DB-level default (NOT NULL violation). Auto-stamped below instead.
+ */
+const TABLES_WITH_UPDATED_AT = new Set([
+  "Patient",
+  "CommunicationPreference",
+  "Service",
+  "Encounter",
+  "ClinicalNote",
+  "DigitalSignature",
+  "ClinicSettings",
+  "InventoryItem",
+  "InventoryAlert",
+  "WhatsAppTemplate",
+])
+
+const NESTED_CREATE_MAP: Record<string, { table: string; fk: string }> = {
+  "Bill.items": { table: "BillItem", fk: "billId" },
+  "Prescription.items": { table: "PrescriptionItem", fk: "prescriptionId" },
+  "Patient.communicationPreference": { table: "CommunicationPreference", fk: "patientId" },
+  "Patient.medicalHistory": { table: "MedicalHistory", fk: "patientId" },
+  "Patient.allergies": { table: "Allergy", fk: "patientId" },
+  "Encounter.clinicalNote": { table: "ClinicalNote", fk: "encounterId" },
+  "ClinicalReport.labResults": { table: "LabResultItem", fk: "reportId" },
+}
+
 // Comprehensive Map of relational foreign keys for PostgREST joins
 const RELATION_MAP: Record<string, Record<string, string>> = {
   User: {
@@ -370,12 +410,52 @@ function createModelDelegate(tableName: string) {
       if (!payload.id) {
         payload.id = tableName.toLowerCase().slice(0, 4) + "_" + nanoid(20)
       }
+      if (TABLES_WITH_UPDATED_AT.has(tableName) && payload.updatedAt === undefined) {
+        payload.updatedAt = new Date().toISOString()
+      }
+
+      // Pull out any Prisma-style nested writes before the flat insert —
+      // see NESTED_CREATE_MAP above for why this is necessary.
+      const nestedWrites: { key: string; table: string; fk: string; rows: Record<string, any>[]; many: boolean }[] = []
+      for (const key of Object.keys(payload)) {
+        const val = payload[key]
+        if (val && typeof val === "object" && !Array.isArray(val) && "create" in val) {
+          const mapping = NESTED_CREATE_MAP[`${tableName}.${key}`]
+          if (mapping) {
+            const many = Array.isArray(val.create)
+            const rows = many ? val.create : [val.create]
+            nestedWrites.push({ key, table: mapping.table, fk: mapping.fk, rows, many })
+          }
+          delete payload[key]
+        }
+      }
+
       const sel = buildSelect(tableName, args.include, args.select)
-      const { data, error } = await supabase.from(tableName).insert(payload).select(sel).single()
+      const result = await supabase.from(tableName).insert(payload).select(sel).single()
+      const error = result.error
+      const data = result.data as any
       if (error) {
         console.error(`[SupabaseDB ${tableName}.create] error:`, JSON.stringify(error))
         throw new Error(error.message)
       }
+
+      for (const nw of nestedWrites) {
+        const childPayload = nw.rows.map((row) => ({
+          id: row.id || nw.table.toLowerCase().slice(0, 4) + "_" + nanoid(20),
+          [nw.fk]: data.id,
+          ...(TABLES_WITH_UPDATED_AT.has(nw.table) && row.updatedAt === undefined
+            ? { updatedAt: new Date().toISOString() }
+            : {}),
+          ...row,
+        }))
+        const { data: childData, error: childError } = await supabase.from(nw.table).insert(childPayload).select()
+        if (childError) {
+          console.error(`[SupabaseDB ${tableName}.create] nested ${nw.table} insert error:`, JSON.stringify(childError))
+          throw new Error(childError.message)
+        }
+        data[nw.key] = nw.many ? childData : (childData?.[0] ?? null)
+      }
+
       return hydrateDates(data)
     },
 
@@ -395,8 +475,12 @@ function createModelDelegate(tableName: string) {
 
     async update(args: { where: Record<string, any>; data: Record<string, any>; include?: any; select?: any }) {
       const supabase = getSupabase()
+      const updateData = { ...args.data }
+      if (TABLES_WITH_UPDATED_AT.has(tableName) && updateData.updatedAt === undefined) {
+        updateData.updatedAt = new Date().toISOString()
+      }
       const sel = buildSelect(tableName, args.include, args.select)
-      let q = supabase.from(tableName).update(args.data)
+      let q = supabase.from(tableName).update(updateData)
       q = applyWhere(q, args.where)
       const { data, error } = await q.select(sel).single()
       if (error) {

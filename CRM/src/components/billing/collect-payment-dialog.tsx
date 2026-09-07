@@ -24,6 +24,7 @@ import { formatCurrency } from "@/lib/format"
 import { collectPayment, getPatientAdvanceBalance } from "@/actions/payments"
 import { addDocument } from "@/actions/patients"
 import { uploadFile } from "@/actions/upload"
+import { compressImageClientSide } from "@/lib/client-image-compress"
 
 type PaymentMethodType = "CASH" | "UPI" | "CARD" | "NET_BANKING" | "ADVANCE"
 
@@ -71,8 +72,9 @@ export function CollectPaymentDialog({
   async function handlePrescriptionFile(file: File) {
     setUploadingPrescription(true)
     try {
+      const compressed = await compressImageClientSide(file)
       const fd = new FormData()
-      fd.set("file", file)
+      fd.set("file", compressed)
       const result = await uploadFile(fd)
       setPrescriptionFile({ url: result.url, type: result.type, name: file.name })
     } catch {

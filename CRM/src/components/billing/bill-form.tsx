@@ -21,6 +21,7 @@ import { formatCurrency } from "@/lib/format"
 import { createBill } from "@/actions/billing"
 import { getPatientInsurances, addDocument } from "@/actions/patients"
 import { uploadFile } from "@/actions/upload"
+import { compressImageClientSide } from "@/lib/client-image-compress"
 
 type Service = { id: string; name: string; price: unknown }
 type Insurance = { id: string; provider: string; policyNumber: string }
@@ -53,8 +54,9 @@ export function BillForm({
   async function handlePrescriptionFile(file: File) {
     setUploadingPrescription(true)
     try {
+      const compressed = await compressImageClientSide(file)
       const fd = new FormData()
-      fd.set("file", file)
+      fd.set("file", compressed)
       const result = await uploadFile(fd)
       setPrescriptionFile({ url: result.url, type: result.type, name: file.name })
     } catch {

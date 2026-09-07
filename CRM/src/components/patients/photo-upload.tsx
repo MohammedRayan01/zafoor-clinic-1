@@ -6,6 +6,7 @@ import { toast } from "sonner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { uploadFile } from "@/actions/upload"
+import { compressImageClientSide } from "@/lib/client-image-compress"
 
 export function PhotoUpload({
   value,
@@ -24,8 +25,9 @@ export function PhotoUpload({
     }
     setUploading(true)
     try {
+      const compressed = await compressImageClientSide(file)
       const formData = new FormData()
-      formData.set("file", file)
+      formData.set("file", compressed)
       const result = await uploadFile(formData)
       onChange(result.url)
     } catch {

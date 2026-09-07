@@ -517,6 +517,12 @@ model WaitingListEntry {
   reason        String?
   priority      Int               @default(0)
   status        WaitingListStatus @default(WAITING)
+  // Mandatory vitals captured at time of waitlisting.
+  bpSystolic    Int
+  bpDiastolic   Int
+  heightCm      Decimal           @db.Decimal(5, 1)
+  weightKg      Decimal           @db.Decimal(5, 1)
+  temperatureC  Decimal           @db.Decimal(4, 1)
   createdAt     DateTime          @default(now())
 
   @@index([patientId])

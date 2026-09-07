@@ -136,4 +136,15 @@
        touching individual components. */
     font-size: 131.25%;
   }
+
+  /* Phones only — the desktop readability bump above makes every rem-based
+     size (text, padding, gaps, radii) oversized on a small screen (cards,
+     icons, stat tiles all felt too large). Dropping back toward the
+     browser default shrinks the whole app proportionally in one place,
+     rather than hand-tuning every component for mobile. */
+  @media (max-width: 640px) {
+    html {
+      font-size: 100%;
+    }
+  }
 }

@@ -496,6 +496,11 @@ export async function addToWaitingList(input: WaitingListInput) {
       requestedDate: data.requestedDate ? new Date(data.requestedDate) : null,
       reason: data.reason || null,
       priority: data.priority,
+      bpSystolic: data.bpSystolic,
+      bpDiastolic: data.bpDiastolic,
+      heightCm: data.heightCm,
+      weightKg: data.weightKg,
+      temperatureC: data.temperatureC,
     },
   })
   revalidatePath("/waiting-list")
